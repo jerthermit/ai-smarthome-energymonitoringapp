@@ -1,12 +1,21 @@
-from fastapi import FastAPI, Depends
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+import logging
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.auth import models as auth_models
 from app.auth.api import router as auth_router
-from app.telemetry import models as telemetry_models  # Import telemetry models
+from app.telemetry import models as telemetry_models
+from app.ai import router as ai_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -33,11 +42,18 @@ app.include_router(auth_router, prefix=settings.API_V1_STR)
 from app.telemetry.api import router as telemetry_router
 app.include_router(telemetry_router, prefix=settings.API_V1_STR)
 
+# Include AI router
+app.include_router(ai_router, prefix=settings.API_V1_STR)
+
 @app.get("/")
-def read_root():
+async def read_root():
+    """Root endpoint with API information."""
     return {
         "message": "Welcome to Smart Home Energy Monitor API",
-        "docs": "/docs"
+        "version": settings.VERSION,
+        "docs": "/docs",
+        "api_v1_docs": f"{settings.API_V1_STR}/docs",
+        "ai_endpoint": f"{settings.API_V1_STR}/ai/chat"
     }
 
 if __name__ == "__main__":

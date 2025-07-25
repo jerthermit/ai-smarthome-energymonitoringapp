@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     
+    # API Keys
+    TOGETHER_API_KEY: Optional[str] = None
+    
     # Security
     SECRET_KEY: str = "your-secret-key-here"  # Change in production
     ALGORITHM: str = "HS256"
