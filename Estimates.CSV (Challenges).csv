@@ -2,7 +2,7 @@
 Project Kickoff,"preliminary drawing board time, estimates.csv, scaffold services",2,4,2.5,
 Core Scope,,,,,
 Auth Service,Implement registration/login/JWT,4,6,4,
-Telemetry Service,API endpoint + ingestion logic,3,6,,
+Telemetry Service,API endpoint + ingestion logic,3,6,2.5,
 Conversational AI Service,Wrap TogetherAI API + intent→query logic,3,4,,
 Data Persistence,Design DB schema (users/devices/telemetry) + seed data + indexing,2,5,,
 Frontend MVP,Login flow + device list + single-chart,5,10,,
