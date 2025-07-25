@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.auth import models as auth_models
 from app.auth.api import router as auth_router
+from app.telemetry import models as telemetry_models  # Import telemetry models
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -27,6 +28,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth_router, prefix=settings.API_V1_STR)
+
+# Include telemetry router
+from app.telemetry.api import router as telemetry_router
+app.include_router(telemetry_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def read_root():
