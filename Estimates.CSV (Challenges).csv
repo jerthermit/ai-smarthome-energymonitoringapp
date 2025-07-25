@@ -1,10 +1,10 @@
 ﻿Story,Task,Estimate min (hr),Estimate max (hr),Actual (hr),Comment
-Project Kickoff,Scaffold services + estimates.csv,1,2,,
+Project Kickoff,"preliminary drawing board time, estimates.csv, scaffold services",2,4,2.5,
 Core Scope,,,,,
-Auth Service,Implement registration/login/JWT,4,6,,
+Auth Service,Implement registration/login/JWT,4,6,4,
 Telemetry Service,API endpoint + ingestion logic,3,6,,
+Conversational AI Service,Wrap TogetherAI API + intent→query logic,3,4,,
 Data Persistence,Design DB schema (users/devices/telemetry) + seed data + indexing,2,5,,
-Conversational AI,Wrap TogetherAI + intent→query logic,3,4,,
 Frontend MVP,Login flow + device list + single-chart,5,10,,
 DevOps & Deploy,Dockerize all services & PostgreSQL + docker-compose.yml,2,4,,
 Tests & Docs,Unit tests + 1 integration test + OpenAPI/Swagger,3,4,,
