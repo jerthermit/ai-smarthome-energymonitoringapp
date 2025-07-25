@@ -7,6 +7,7 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 pydantic-settings==2.7.1
 email-validator==2.1.0.post1
+httpx[http2]>=0.25.1  # Async HTTP client for AI providers
 
 # Database
 sqlalchemy==2.0.23
