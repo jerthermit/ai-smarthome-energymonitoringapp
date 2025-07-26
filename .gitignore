@@ -53,3 +53,5 @@ htmlcov/
 
 # Project specific
 /instance/
+backend/alembic/README
+backend/alembic/script.py.mako
