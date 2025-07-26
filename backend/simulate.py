@@ -6,20 +6,19 @@ from app.telemetry.models import Device
 from app.auth.models import User
 
 def create_test_devices():
-    """Create test devices if none exist"""
+    """Create test devices for test@test.com if none exist"""
     db = SessionLocal()
     try:
-        # Check if we have any users
-        user = db.query(User).first()
+        # Get the test@test.com user
+        user = db.query(User).filter(User.email == 'test@test.com').first()
         if not user:
-            print("No users found in the database. Please create a user first.")
-            print("You can do this by registering through the frontend.")
+            print("test@test.com user not found. Please create this user first.")
             sys.exit(1)
             
-        # Check if we have any devices
-        devices = db.query(Device).all()
+        # Check if test@test.com already has devices
+        devices = db.query(Device).filter(Device.user_id == user.id).all()
         if not devices:
-            print("No devices found. Creating test devices...")
+            print(f"No devices found for {user.email}. Creating test devices...")
             device_names = ["Living Room AC", "Kitchen Fridge", "Bedroom Light", 
                           "Home Office PC", "Water Heater"]
             devices = []
@@ -27,14 +26,14 @@ def create_test_devices():
                 device = Device(
                     id=str(uuid.uuid4()),
                     name=name,
-                    user_id=user.id
+                    user_id=user.id  # Use test@test.com's user_id
                 )
                 db.add(device)
                 devices.append(device)
             db.commit()
-            print(f"Created {len(devices)} test devices")
+            print(f"Created {len(devices)} test devices for {user.email}")
         else:
-            print(f"Found {len(devices)} existing devices")
+            print(f"Found {len(devices)} existing devices for {user.email}")
             
         return [str(device.id) for device in devices]
         
