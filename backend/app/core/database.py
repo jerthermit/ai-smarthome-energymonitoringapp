@@ -4,18 +4,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 
-# Use SQLite for testing
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URI
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 def get_db():
-    """Dependency function that yields database sessions"""
     db = SessionLocal()
     try:
         yield db
