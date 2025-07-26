@@ -3,6 +3,7 @@ Together AI provider implementation.
 Handles communication with the Together AI API.
 """
 import os
+import json
 import logging
 from typing import Dict, List, Any, Optional, Literal
 import httpx
@@ -99,6 +100,48 @@ class TogetherAIProvider(AIProvider):
             logger.exception(error_msg)
             return {"error": error_msg, "status_code": 500}
     
+    async def get_structured_response(
+        self,
+        prompt: str,
+        response_format: Dict[str, Any],
+        temperature: float = 0.2,
+        max_tokens: int = 2000
+    ) -> Dict[str, Any]:
+        """Generate a structured JSON response using Together AI's API."""
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": response_format
+        }
+
+        try:
+            response = await self.client.post(
+                f"{self.BASE_URL}/chat/completions",
+                json=payload
+            )
+            response.raise_for_status()
+            response_data = response.json()
+
+            response_content = response_data.get("choices", [{}])[0].get("message", {}).get("content")
+            if response_content is None:
+                raise ValueError("Received empty or invalid response from AI provider")
+
+            return json.loads(response_content)
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"API request failed with status {e.response.status_code}: {e.response.text}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode JSON from AI response: {e}. Response: {response_content}")
+            raise
+        except Exception as e:
+            error_msg = f"Unexpected error in get_structured_response: {str(e)}"
+            logger.exception(error_msg)
+            raise
+
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._client and not self._client.is_closed:
