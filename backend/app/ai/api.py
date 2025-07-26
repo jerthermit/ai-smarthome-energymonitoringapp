@@ -6,15 +6,17 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any, Optional
 
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.auth.dependencies import get_current_user
+from app.auth.models import User
 from .service import AIService
-from .schemas import ChatRequest, ChatResponse, ErrorResponse
-from ..core.config import settings
+from .chat_schemas import ChatRequest, ChatResponse, ErrorResponse
+from app.core.config import settings
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
-def get_ai_service() -> AIService:
-    """Dependency to get an AI service instance."""
-    return AIService.create_default()
+
 
 @router.post(
     "/chat",
@@ -26,39 +28,39 @@ def get_ai_service() -> AIService:
     }
 )
 async def chat_endpoint(
-    chat_request: ChatRequest,
-    ai_service: AIService = Depends(get_ai_service)
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Handle chat requests and return AI responses.
     
-    - **messages**: List of messages in the conversation
-    - **temperature**: Controls randomness (0.0 to 1.0)
-    - **max_tokens**: Maximum number of tokens to generate
+    For energy-related queries, returns a structured JSON response with:
+    - summary: Natural language summary
+    - data: Structured information
+    - time_series: Optional time-series data
+    
+    Parameters:
+    - messages: List of messages in the conversation
+    - temperature: Controls randomness (0.0 to 1.0)
+    - max_tokens: Maximum number of tokens to generate
     """
     try:
-        # Convert Pydantic models to dict for the service
-        messages = [msg.dict() for msg in chat_request.messages]
-        
-        # Call the AI service
+        ai_service = AIService(db_session=db)
         response = await ai_service.chat(
-            messages=messages,
-            temperature=chat_request.temperature,
-            max_tokens=chat_request.max_tokens,
-            stream=chat_request.stream
+            user_id=current_user.id,
+            request=request
         )
         
-        # Handle error responses
-        if "error" in response:
-            status_code = response.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
-            raise HTTPException(
-                status_code=status_code,
-                detail={"error": response["error"]}
-            )
+        # If this is an energy query response, include the raw data
+        if hasattr(response, 'get') and 'energy_data' in response:
+            return {
+                **response,
+                'energy_data': response['energy_data']
+            }
             
         return response
         
-    except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
         
@@ -80,16 +82,17 @@ async def chat_endpoint(
         503: {"model": ErrorResponse}
     }
 )
-async def health_check(ai_service: AIService = Depends(get_ai_service)):
+async def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint to verify the service is running and can communicate
     with the AI provider.
     """
     try:
+        ai_service = AIService(db_session=db)
         # Test the AI service with a simple prompt
         response = await ai_service.chat(
-            messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=5
+            user_id=1, # Use a dummy user for health check
+            request=ChatRequest(messages=[{"role": "user", "content": "Hello"}])
         )
         
         if "error" in response:
