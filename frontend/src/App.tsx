@@ -8,6 +8,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import DeviceList from './pages/DeviceList';
+
 import './App.css';
 
 // Create a client
@@ -39,6 +40,7 @@ function App() {
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/devices" element={<DeviceList />} />
+
             </Route>
 
             {/* Catch all route */}

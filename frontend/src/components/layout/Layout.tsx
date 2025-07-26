@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { ChatbotWidget } from '../chatbot/ChatbotWidget';
 import { useAuth } from '../../context/AuthContext';
 
 const Layout = () => {
@@ -60,9 +61,10 @@ const Layout = () => {
       </nav>
 
       {/* Main content */}
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto">
         <Outlet />
       </main>
+      <ChatbotWidget />
     </div>
   );
 };
