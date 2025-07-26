@@ -45,16 +45,26 @@ export const authService = {
     return userResponse;
   },
 
-  async register(email: string, password: string, fullName?: string): Promise<User> {
-    const response = await axios.post<User>(
-      `${API_URL}/auth/register`,
-      { 
-        email, 
-        password,
-        full_name: fullName  // Note: full_name instead of fullName to match backend
-      }
-    );
-    return response.data;
+  async register(email: string, password: string, full_name?: string): Promise<User> {
+    try {
+      const response = await axios.post<User>(
+        `${API_URL}/auth/register`,
+        { 
+          email, 
+          password,
+          full_name: full_name?.trim() || undefined
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Registration API error:', error);
+      throw error;
+    }
   },
 
   async getCurrentUser(): Promise<User | null> {

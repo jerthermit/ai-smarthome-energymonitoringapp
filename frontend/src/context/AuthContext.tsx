@@ -5,12 +5,18 @@ import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
 import type { User } from '../services/authService';
 
+type RegisterData = {
+  email: string;
+  password: string;
+  full_name?: string;
+};
+
 type AuthContextType = {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName?: string) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
   logout: () => void;
 };
 
@@ -47,9 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (email: string, password: string, fullName?: string) => {
+  const register = async (userData: { email: string; password: string; full_name?: string }) => {
     try {
-      const user = await authService.register(email, password, fullName);
+      const user = await authService.register(userData.email, userData.password, userData.full_name);
       setUser(user);
       navigate('/dashboard');
     } catch (error) {
