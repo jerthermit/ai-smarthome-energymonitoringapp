@@ -6,7 +6,7 @@ and processing natural language queries about energy usage and smart home data.
 """
 from .api import router as ai_router
 from .service import AIService
-from .schemas import ChatRequest, ChatResponse, ErrorResponse
+from .chat_schemas import ChatRequest, ChatResponse, ErrorResponse
 from .providers import AIProvider, TogetherAIProvider
 
 # Export the router for FastAPI app inclusion

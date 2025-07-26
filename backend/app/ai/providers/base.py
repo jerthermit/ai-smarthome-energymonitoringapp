@@ -29,6 +29,28 @@ class AIProvider(ABC):
             Dictionary containing the model's response
         """
         pass
+
+    @abstractmethod
+    async def get_structured_response(
+        self,
+        prompt: str,
+        response_format: Dict[str, Any],
+        temperature: float = 0.2,
+        max_tokens: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        Generate a structured JSON response from a prompt.
+
+        Args:
+            prompt: The prompt to send to the model.
+            response_format: The required format for the response (e.g., JSON).
+            temperature: Controls randomness (0.0 to 1.0).
+            max_tokens: Maximum number of tokens to generate.
+
+        Returns:
+            A dictionary containing the structured response.
+        """
+        pass
     
     @abstractmethod
     async def close(self) -> None:
