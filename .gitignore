@@ -55,3 +55,15 @@ htmlcov/
 /instance/
 backend/alembic/README
 backend/alembic/script.py.mako
+
+# Frontend
+node_modules/
+.DS_Store
+dist/
+dist-ssr/
+*.local
+
+# Environment files
+.env
+.env.*
+!.env.example
