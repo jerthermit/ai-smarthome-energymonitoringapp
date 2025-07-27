@@ -23,23 +23,13 @@ const Layout = () => {
   const userInitial = userDisplayName.charAt(0).toUpperCase();
   const userRole = user?.is_superuser ? 'Admin' : 'User';
 
-  // Navigation items with icons
+  // Navigation items with icons - Only Dashboard remains
   const navItems = [
     { 
       name: 'Dashboard', 
       href: '/dashboard', 
       icon: <Icons.dashboard className="h-4 w-4" /> 
-    },
-    { 
-      name: 'Devices', 
-      href: '/devices', 
-      icon: <Icons.devices className="h-4 w-4" /> 
-    },
-    { 
-      name: 'Analytics', 
-      href: '/analytics', 
-      icon: <Icons.analytics className="h-4 w-4" /> 
-    },
+    }
   ];
 
   // Check if current route matches nav item

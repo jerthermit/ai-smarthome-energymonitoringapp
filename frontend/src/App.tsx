@@ -7,7 +7,6 @@ import Layout from './components/layout/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
-import DeviceList from './pages/DeviceList';
 
 import './App.css';
 
@@ -39,7 +38,6 @@ function App() {
             }>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/devices" element={<DeviceList />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
 
