@@ -43,12 +43,12 @@ export const ChatInput = ({
   }, [message]);
 
   return (
-    <div className="border-t border-gray-200 px-4 pt-4 mb  -4 sm:mb-0">
-      <div className="relative flex-1 overflow-hidden rounded-lg shadow-sm ring-1 ring-inset ring-gray-300 focus-within:ring-2 focus-within:ring-blue-600">
+    <div className="border-t border-border px-4 pt-4 mb-4 sm:mb-0">
+      <div className="relative flex-1 overflow-hidden rounded-lg shadow-sm ring-1 ring-inset ring-border focus-within:ring-2 focus-within:ring-primary">
         <textarea
           ref={textareaRef}
           rows={1}
-          className="block w-full resize-none border-0 bg-transparent text-gray-900 placeholder:text-gray-400 focus:ring-0 sm:py-1.5 sm:text-sm sm:leading-6"
+          className="block w-full resize-none border-0 bg-transparent text-foreground placeholder:text-muted-foreground/50 focus:ring-0 sm:py-1.5 sm:text-sm sm:leading-6"
           placeholder={placeholder}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -66,10 +66,10 @@ export const ChatInput = ({
           type="button"
           onClick={handleSubmit}
           disabled={!message.trim() || disabled}
-          className={`inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold shadow-sm ${
+          className={`inline-flex items-center rounded-md px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
             !message.trim() || disabled
-              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-              : 'bg-blue-600 text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600'
+              ? 'bg-muted text-muted-foreground/50 cursor-not-allowed'
+              : 'bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
           }`}
         >
           {disabled ? 'Sending...' : 'Send'}

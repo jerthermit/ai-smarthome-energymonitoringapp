@@ -6,15 +6,15 @@ type ButtonVariant = 'default' | 'destructive' | 'outline' | 'secondary' | 'ghos
 type ButtonSize = 'default' | 'sm' | 'lg' | 'icon';
 
 const variantClasses: Record<ButtonVariant, string> = {
-  default: 'bg-primary text-primary-foreground shadow hover:bg-primary/90',
+  default: 'bg-primary text-primary-foreground shadow hover:bg-primary/90 hover:shadow-md',
   destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
-  outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
+  outline: 'border border-input bg-card text-card-foreground shadow-sm hover:bg-accent/50 hover:text-accent-foreground',
   secondary: 'bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80',
-  ghost: 'hover:bg-accent hover:text-accent-foreground',
+  ghost: 'hover:bg-accent/50 hover:text-accent-foreground',
   link: 'text-primary underline-offset-4 hover:underline',
-  success: 'bg-green-600 text-white hover:bg-green-600/90',
-  warning: 'bg-amber-500 text-white hover:bg-amber-500/90',
-  glass: 'bg-white/10 backdrop-blur-sm border border-white/20 text-white hover:bg-white/20',
+  success: 'bg-success text-success-foreground hover:bg-success/90',
+  warning: 'bg-warning text-warning-foreground hover:bg-warning/90',
+  glass: 'bg-background/80 backdrop-blur-sm border border-border/50 text-foreground hover:bg-accent/30',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

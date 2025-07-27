@@ -34,7 +34,9 @@ export const ChatMessage = ({ message }: ChatMessageProps) => {
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
       <div className={`flex items-start gap-3 max-w-3xl w-full ${isUser ? 'flex-row-reverse' : ''}`}>
         <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${
-          isUser ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+          isUser 
+            ? 'bg-primary/10 text-primary' 
+            : 'bg-secondary/10 text-secondary'
         }`}>
           {isUser ? (
             <UserCircleIcon className="h-5 w-5" />
@@ -46,8 +48,8 @@ export const ChatMessage = ({ message }: ChatMessageProps) => {
           <div
             className={`px-4 py-3 rounded-lg ${
               isUser 
-                ? 'bg-blue-600 text-white rounded-tr-none' 
-                : 'bg-gray-100 text-gray-800 rounded-tl-none'
+                ? 'bg-primary text-primary-foreground rounded-tr-none' 
+                : 'bg-accent/30 text-foreground rounded-tl-none'
             }`}
           >
             {energyData ? (
@@ -60,7 +62,11 @@ export const ChatMessage = ({ message }: ChatMessageProps) => {
               </div>
             )}
           </div>
-          <div className={`text-xs mt-1 ${isUser ? 'text-right text-blue-100' : 'text-left text-gray-500'}`}>
+          <div className={`text-xs mt-1 ${
+            isUser 
+              ? 'text-right text-muted-foreground/80' 
+              : 'text-left text-muted-foreground'
+          }`}>
             {message.timestamp && format(new Date(message.timestamp), 'h:mm a')}
           </div>
         </div>
