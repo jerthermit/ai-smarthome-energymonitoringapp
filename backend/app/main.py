@@ -16,6 +16,7 @@ from app.auth import models as auth_models
 from app.auth.api import router as auth_router
 from app.telemetry import models as telemetry_models
 from app.ai import router as ai_router
+from app.websocket import router as websocket_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -44,6 +45,9 @@ app.include_router(telemetry_router, prefix=settings.API_V1_STR)
 
 # Include AI router
 app.include_router(ai_router, prefix=settings.API_V1_STR)
+
+# Include WebSocket router (no prefix for WebSocket routes)
+app.include_router(websocket_router)
 
 @app.get("/")
 async def read_root():

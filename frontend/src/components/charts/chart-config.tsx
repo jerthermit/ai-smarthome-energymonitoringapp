@@ -18,9 +18,9 @@ const defaultChartOptions: ChartOptions = {
     legend: {
       position: 'top' as const,
       labels: {
-        color: 'hsl(var(--muted-foreground))',
+        color: 'hsl(0, 0%, 50%)', // muted-foreground
         font: {
-          family: 'var(--font-sans)',
+          family: 'Inter, system-ui, sans-serif',
           size: 12,
         },
         padding: 20,
@@ -28,10 +28,10 @@ const defaultChartOptions: ChartOptions = {
       },
     },
     tooltip: {
-      backgroundColor: 'hsl(var(--popover))',
-      titleColor: 'hsl(var(--foreground))',
-      bodyColor: 'hsl(var(--muted-foreground))',
-      borderColor: 'hsl(var(--border))',
+      backgroundColor: 'hsl(0, 0%, 100%)', // popover
+      titleColor: 'hsl(219, 79%, 26%)', // foreground
+      bodyColor: 'hsl(0, 0%, 50%)', // muted-foreground
+      borderColor: 'hsl(219, 20%, 90%)', // border
       borderWidth: 1,
       padding: 12,
       usePointStyle: true,
@@ -50,16 +50,16 @@ const defaultChartOptions: ChartOptions = {
         display: false,
       },
       ticks: {
-        color: 'hsl(var(--muted-foreground))',
+        color: 'hsl(0, 0%, 50%)', // muted-foreground
       },
     },
     y: {
       beginAtZero: true,
       grid: {
-        color: 'hsl(var(--border))',
+        color: 'hsl(219, 20%, 90%)', // border
       },
       ticks: {
-        color: 'hsl(var(--muted-foreground))',
+        color: 'hsl(0, 0%, 50%)', // muted-foreground
         callback: function (value: string | number) {
           return `${value} kWh`;
         },
@@ -73,19 +73,38 @@ const defaultLineDataset = {
   borderWidth: 2,
   pointRadius: 0,
   pointHoverRadius: 4,
-  pointBackgroundColor: 'hsl(var(--background))',
+  pointBackgroundColor: 'hsl(219, 34%, 98%)', // background
   pointBorderWidth: 2,
-  borderColor: 'hsl(var(--primary))',
-  backgroundColor: 'hsl(var(--primary) / 0.1)',
+  borderColor: 'hsl(267, 100%, 58%)', // secondary
+  backgroundColor: (context: ScriptableContext<'line'>) => {
+    const { chart } = context;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return 'hsla(267, 100%, 58%, 0.1)';
+    
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.1)');
+    gradient.addColorStop(1, 'hsla(267, 100%, 58%, 0.4)');
+    return gradient;
+  },
   tension: 0.3,
   fill: true,
 };
 
-// Helper function to convert CSS variable to RGB
-const getCssVar = (varName: string) => {
-  if (typeof window === 'undefined') return 'rgba(59, 130, 246, 1)'; // Fallback color
-  const style = getComputedStyle(document.documentElement);
-  return style.getPropertyValue(varName).trim();
+// Chart.js configuration
+export const chartConfig = {
+  // Theme colors in HSL format for Chart.js
+  colors: {
+    primary: 'hsl(219, 79%, 26%)',
+    secondary: 'hsl(267, 100%, 58%)',
+    background: 'hsl(219, 34%, 98%)',
+    foreground: 'hsl(219, 79%, 26%)',
+    muted: 'hsl(0, 0%, 50%)',
+    border: 'hsl(219, 20%, 90%)',
+    card: 'hsl(0, 0%, 100%)',
+    popover: 'hsl(0, 0%, 100%)',
+    accent: 'hsl(0, 0%, 98%)',
+    destructive: 'hsl(0, 84.2%, 60.2%)',
+  },
 };
 
 // Default bar chart dataset options
@@ -96,27 +115,22 @@ const defaultBarDataset = {
   backgroundColor: (context: ScriptableContext<'bar'>) => {
     const { chart } = context;
     const { ctx, chartArea } = chart;
-    if (!chartArea) return getCssVar('--primary');
+    if (!chartArea) return 'hsla(267, 100%, 58%, 0.7)'; // secondary with opacity
     
     const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-    // Use hardcoded colors as fallbacks that match your theme
-    try {
-      const primaryColor = getCssVar('--primary');
-      gradient.addColorStop(0, primaryColor.replace(')', ' / 0.2)'));
-      gradient.addColorStop(1, primaryColor);
-    } catch (e) {
-      // Fallback colors if there's an error parsing the CSS variable
-      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.2)');
-      gradient.addColorStop(1, 'rgba(59, 130, 246, 1)');
-    }
+    gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.2)');
+    gradient.addColorStop(1, 'hsla(267, 100%, 58%, 0.8)');
     return gradient;
   },
-  hoverBackgroundColor: () => {
-    try {
-      return getCssVar('--primary');
-    } catch (e) {
-      return 'rgba(59, 130, 246, 1)';
-    }
+  hoverBackgroundColor: (context: ScriptableContext<'bar'>) => {
+    const { chart } = context;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return 'hsl(267, 100%, 58%)'; // secondary
+    
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.3)');
+    gradient.addColorStop(1, 'hsla(267, 100%, 58%, 1)');
+    return gradient;
   },
   maxBarThickness: 32,
 };
