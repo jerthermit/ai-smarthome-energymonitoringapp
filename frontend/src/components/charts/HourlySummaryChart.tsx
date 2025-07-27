@@ -1,16 +1,17 @@
 import React from 'react';
-import { Bar } from 'react-chartjs-2';
+import { Chart } from 'react-chartjs-2';
+import type { ChartData, ChartOptions } from 'chart.js';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   BarElement,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
-import type { ChartData, ChartOptions } from 'chart.js';
-import { useQuery } from '@tanstack/react-query';
 import { Skeleton } from '../ui/skeleton';
 
 // Register ChartJS components
@@ -18,61 +19,77 @@ ChartJS.register(
   CategoryScale,
   LinearScale,
   BarElement,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
   Legend
 );
 
-interface HourlyData {
-  hour: string;
-  energy: number;
-  average: number;
+interface HourlyDataPoint {
+  hour: number;
+  averageEnergy: number;
 }
 
-const fetchHourlyData = async (): Promise<HourlyData[]> => {
-  // This would be replaced with actual API call
-  const response = await fetch('/api/telemetry/hourly');
-  if (!response.ok) {
-    throw new Error('Failed to fetch hourly data');
-  }
-  return response.json();
+interface HourlySummaryChartProps {
+  data: HourlyDataPoint[];
+  isLoading: boolean;
+  error: Error | null;
+}
+
+type ChartDatasetType = {
+  type: 'bar' | 'line';
+  label: string;
+  data: number[];
+  [key: string]: any;
 };
 
-const processHourlyData = (data: HourlyData[]): ChartData<'bar', number[], string> => {
-  const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+type ChartDataType = Omit<ChartData<'bar' | 'line', number[], string>, 'datasets'> & {
+  datasets: ChartDatasetType[];
+};
+
+const processHourlyData = (data: HourlyDataPoint[]): ChartDataType => {
+  const hours = Array.from({ length: 24 }, (_, i) => i);
   
   return {
-    labels: hours,
+    labels: hours.map(h => `${h}:00`),
     datasets: [
       {
+        type: 'bar',
         label: "Today's Usage (kWh)",
         data: hours.map(hour => {
           const dataPoint = data.find(d => d.hour === hour);
-          return dataPoint ? dataPoint.energy : 0;
+          return dataPoint ? dataPoint.averageEnergy : 0;
         }),
-        backgroundColor: 'rgba(59, 130, 246, 0.7)',
-        borderColor: 'rgb(59, 130, 246)',
+        backgroundColor: 'hsl(var(--primary))',
+        borderColor: 'hsl(var(--primary))',
         borderWidth: 1,
+        borderRadius: 4,
+        barThickness: 12,
       },
       {
-        label: 'Daily Average (kWh)',
+        type: 'line',
+        label: 'Average (kWh)',
         data: hours.map(hour => {
-          const dataPoint = data.find(d => d.hour === hour);
-          return dataPoint ? dataPoint.average : 0;
+          // Calculate average of all data points for this hour
+          const hourData = data.filter(d => d.hour === hour);
+          const sum = hourData.reduce((acc, curr) => acc + curr.averageEnergy, 0);
+          return hourData.length > 0 ? sum / hourData.length : 0;
         }),
-        type: 'line' as const,
-        borderColor: 'rgba(255, 99, 132, 1)',
+        borderColor: 'hsl(var(--muted-foreground))',
         borderWidth: 2,
         borderDash: [5, 5],
-        backgroundColor: 'transparent',
-        pointBackgroundColor: 'transparent',
-        pointBorderColor: 'transparent',
+        pointBackgroundColor: 'hsl(var(--muted-foreground))',
+        pointBorderColor: 'hsl(var(--background))',
+        pointBorderWidth: 1,
+        pointRadius: 3,
+        pointHoverRadius: 5,
       },
     ],
   };
 };
 
-const chartOptions: ChartOptions<'bar'> = {
+const chartOptions: ChartOptions<'bar' | 'line'> = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
@@ -108,25 +125,43 @@ const chartOptions: ChartOptions<'bar'> = {
   },
 };
 
-const HourlySummaryChart: React.FC = () => {
-  const { data, isLoading, error } = useQuery<HourlyData[]>({
-    queryKey: ['hourly'],
-    queryFn: fetchHourlyData,
-  });
+const HourlySummaryChart: React.FC<HourlySummaryChartProps> = ({ data = [], isLoading, error }) => {
 
   if (isLoading) {
-    return <Skeleton className="w-full h-full" />;
+    return (
+      <div className="h-full w-full flex items-center justify-center">
+        <Skeleton className="h-full w-full" />
+      </div>
+    );
   }
-
-  if (error || !data) {
-    return <div className="text-red-500">Error loading hourly data</div>;
+  
+  if (error) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-destructive">
+        Error loading hourly data
+      </div>
+    );
   }
 
   const chartData = processHourlyData(data);
 
+  // Extend the base options with type-specific settings
+  const mergedOptions: ChartOptions<'bar' | 'line'> = {
+    ...chartOptions,
+    responsive: true,
+    maintainAspectRatio: false,
+  };
+
   return (
     <div className="w-full h-full">
-      <Bar options={chartOptions} data={chartData} />
+      <Chart
+        type="bar"
+        data={{
+          ...chartData,
+          datasets: chartData.datasets
+        }}
+        options={mergedOptions}
+      />
     </div>
   );
 };
