@@ -12,9 +12,9 @@ import {
   Filler,
 } from 'chart.js';
 import type { ChartData, ChartOptions, ScriptableContext } from 'chart.js';
-import { chartConfig } from './chart-config';
-import { useEnergyData } from '../../hooks/useEnergyData';
-import type { TelemetryData, TimeRange } from '../../hooks/useEnergyData';
+import { chartConfig } from '../dashboard/charts/chart-config';
+import { useEnergyData } from '../../hooks/useTelemetryData';
+import type { TelemetryData, TimeRange } from '../../hooks/useTelemetryData';
 
 // Register ChartJS components
 ChartJS.register(

@@ -15,7 +15,7 @@ import type { ChartData, ChartOptions } from 'chart.js';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Skeleton } from '../ui/skeleton';
-import { chartConfig } from './chart-config';
+import { chartConfig } from '../dashboard/charts/chart-config';
 
 // Register ChartJS components
 ChartJS.register(

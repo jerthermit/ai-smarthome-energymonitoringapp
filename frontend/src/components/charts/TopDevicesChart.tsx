@@ -8,7 +8,7 @@ import {
   ChartEmpty,
   type ChartComponentProps,
   chartConfig
-} from './chart-config';
+} from '../dashboard/charts/chart-config';
 
 // Register only the necessary ChartJS components
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
