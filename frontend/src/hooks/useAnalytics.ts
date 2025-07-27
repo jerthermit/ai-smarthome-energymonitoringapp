@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import type { TelemetryData } from './useEnergyData';
+import type { TelemetryData } from './useTelemetryData';
 
 type TimeRange = 'day' | 'week' | 'month';
 
