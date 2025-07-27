@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -136,26 +136,50 @@ const chartOptions: ChartOptions<'line'> = {
   }
 };
 
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
+
 export const EnergyUsageChart = ({
   data,
   timeRange,
   isLoading,
   error
 }: EnergyUsageChartProps) => {
-  console.group('=== EnergyUsageChart Props ===');
-  console.log('Props:', { data, timeRange, isLoading, error });
-  
-  const chartData = processChartData(data, timeRange);
-  
-  React.useEffect(() => {
-    console.log('Chart data updated:', chartData);
+  const chartRef = useRef<ChartJS | null>(null);
+  const [chartData, setChartData] = React.useState<ChartData<'line', number[], string>>({
+    labels: [],
+    datasets: []
+  });
+
+  // Process chart data in an effect to handle cleanup
+  useEffect(() => {
+    const processedData = processChartData(data, timeRange);
+    setChartData(processedData);
+
+    // Cleanup function to destroy chart instance
     return () => {
-      console.groupEnd();
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
     };
-  }, [chartData]);
+  }, [data, timeRange]);
+
+  // Handle chart instance updates
+  const chartCallback = (chart: any) => {
+    chartRef.current = chart;
+  };
 
   if (isLoading) {
-    console.log('Rendering loading state');
     return (
       <div className="flex items-center justify-center h-80">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -164,7 +188,6 @@ export const EnergyUsageChart = ({
   }
 
   if (error) {
-    console.error('Error in EnergyUsageChart:', error);
     return (
       <div className="text-red-500 text-center p-4">
         Error loading energy data. Please try again later.
@@ -172,7 +195,16 @@ export const EnergyUsageChart = ({
     );
   }
 
-  return <Line data={chartData} options={chartOptions} />;
+  return (
+    <div className="w-full h-full">
+      <Line 
+        data={chartData} 
+        options={chartOptions} 
+        ref={chartCallback}
+        key={`chart-${timeRange}`} // Force re-render on timeRange change
+      />
+    </div>
+  );
 };
 
 export default EnergyUsageChart;
