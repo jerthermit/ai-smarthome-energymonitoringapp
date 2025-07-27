@@ -1,53 +1,272 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  :root {
+    /* Base colors - Updated color scheme */
+    --background: 219 34% 98%; /* Very light blue background */
+    --foreground: 219 79% 26%; /* Deep ocean blue text */
+    
+    /* Card colors */
+    --card: 0 0% 100%; /* Pure white cards */
+    --card-foreground: 219 79% 26%; /* Dark blue text */
+    
+    /* Popover colors */
+    --popover: 0 0% 100%; /* White popovers */
+    --popover-foreground: 219 79% 26%; /* Dark blue text */
+    
+    /* Primary - Deep Ocean Blue */
+    --primary: 219 79% 26%; /* Deep ocean blue */
+    --primary-foreground: 0 0% 100%; /* White text */
+    --primary-light: 219 79% 35%; /* Lighter ocean blue */
+    --primary-dark: 219 79% 20%; /* Darker ocean blue */
+    --primary-muted: 219 34% 95%; /* Very light blue for backgrounds */
+    
+    /* Secondary - Vibrant Amethyst */
+    --secondary: 267 100% 58%; /* Vibrant amethyst */
+    --secondary-foreground: 0 0% 100%; /* White text */
+    --secondary-light: 267 100% 92%; /* Very light amethyst */
+    --secondary-dark: 267 100% 45%; /* Darker amethyst */
+    
+    /* Accent - Royal White */
+    --accent: 0 0% 98%; /* Royal white */
+    --accent-foreground: 219 79% 26%; /* Dark blue text */
+    --accent-light: 0 0% 100%; /* Pure white */
+    --accent-dark: 0 0% 95%; /* Slightly off-white */
+    
+    /* Background variants */
+    --background-alt: 0 0% 100%; /* White for alternate backgrounds */
+    
+    /* Card variants */
+    --card-border: 219 20% 90%; /* Light border for cards */
+    --card-hover: 219 34% 98%; /* Very light blue on hover */
+    
+    /* Destructive - For errors and warnings */
+    --destructive: 0 84% 60%; /* Red */
+    --destructive-foreground: 0 0% 100%; /* White text */
+    --destructive-light: 0 84% 95%; /* Very light red */
+    --destructive-dark: 0 84% 50%; /* Darker red */
+    
+    /* Muted - For secondary text and subtle UI */
+    --muted: 219 16% 96%; /* Very light blue-gray */
+    --muted-foreground: 215 16% 47%; /* Muted blue-gray text */
+    --muted-border: 219 20% 90%; /* Light border */
+    
+    /* Borders */
+    --border: 219 20% 90%; /* Light blue-gray border */
+    --input: 0 0% 100%; /* White input background */
+    
+    /* Focus ring - Using amethyst for focus states */
+    --ring: 267 100% 58%; /* Amethyst */
+    
+    /* Border radius */
+    --radius: 0.5rem;
+  }
+  
+  /* Dark mode is not being used but keeping it minimal to avoid errors */
+  .dark {
+    /* Just a basic dark mode that inverts the colors */
+    --background: 219 79% 5%;
+    --foreground: 0 0% 98%;
+    --card: 219 79% 5%;
+    --card-foreground: 0 0% 98%;
+    --popover: 219 79% 5%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 219 79% 35%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 267 100% 70%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 219 20% 20%;
+    --muted-foreground: 219 20% 80%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 219 20% 25%;
+    --input: 219 20% 20%;
+    --ring: 267 100% 70%;
+  }
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  @apply w-2 h-2;
 }
 
+::-webkit-scrollbar-track {
+  @apply bg-background;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/30 transition-colors;
+}
+
+/* Focus styles */
+:focus-visible {
+  @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background rounded-sm;
+}
+
+/* Remove default button styles */
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
+  @apply focus:outline-none;
 }
-button:hover {
-  border-color: #646cff;
+
+/* Base link styles */
+a {
+  @apply text-primary hover:text-primary/80 transition-colors;
+}
+
+/* Base typography */
+h1, h2, h3, h4, h5, h6 {
+  @apply font-semibold tracking-tight;
+}
+
+h1 { @apply text-4xl md:text-5xl; }
+h2 { @apply text-3xl md:text-4xl; }
+h3 { @apply text-2xl md:text-3xl; }
+h4 { @apply text-xl md:text-2xl; }
+h5 { @apply text-lg md:text-xl; }
+h6 { @apply text-base md:text-lg; }
+
+p {
+  @apply leading-relaxed text-muted-foreground;
+}
+
+/* Form elements */
+input, textarea, select {
+  @apply w-full px-3 py-2 rounded-md border border-input bg-background text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+/* Buttons */
+.btn {
+  @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ring-offset-background;
+}
+
+.btn-primary {
+  @apply bg-primary text-primary-foreground hover:bg-primary/90 h-10 py-2 px-4;
+}
+
+.btn-secondary {
+  @apply bg-secondary text-secondary-foreground hover:bg-secondary/80 h-10 py-2 px-4;
+}
+
+.btn-outline {
+  @apply border border-input hover:bg-accent hover:text-accent-foreground h-10 py-2 px-4;
+}
+
+.btn-ghost {
+  @apply hover:bg-accent hover:text-accent-foreground h-10 py-2 px-4;
+}
+
+.btn-link {
+  @apply underline-offset-4 hover:underline text-primary h-auto p-0;
+}
+
+/* Cards */
+.card {
+  @apply rounded-lg border bg-card text-card-foreground shadow-sm;
+}
+
+.card-header {
+  @apply flex flex-col space-y-1.5 p-6 pb-2;
+}
+
+.card-title {
+  @apply text-2xl font-semibold leading-none tracking-tight;
+}
+
+.card-description {
+  @apply text-sm text-muted-foreground;
+}
+
+.card-content {
+  @apply p-6 pt-0;
+}
+
+.card-footer {
+  @apply flex items-center p-6 pt-0;
+}
+
+/* Alerts */
+.alert {
+  @apply relative w-full rounded-lg border p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground;
+}
+
+.alert-destructive {
+  @apply border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive;
+}
+
+/* Skeleton */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.skeleton {
+  @apply bg-muted animate-pulse rounded-md;
+}
+
+/* Custom animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+/* Responsive utilities */
+.container {
+  @apply w-full px-4 sm:px-6 lg:px-8 mx-auto;
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  
+  a {
+    color: #1a0dab !important;
+    text-decoration: underline !important;
+  }
 }
 button:focus,
 button:focus-visible {
