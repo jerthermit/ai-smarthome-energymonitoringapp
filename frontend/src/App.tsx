@@ -37,10 +37,10 @@ function App() {
                 <Layout />
               </PrivateRoute>
             }>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/devices" element={<DeviceList />} />
-
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
 
             {/* Catch all route */}
