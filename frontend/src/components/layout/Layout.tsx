@@ -1,7 +1,7 @@
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatbotWidget } from '../chatbot/ChatbotWidget';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../utils';
 import { Button } from '../ui/button';
 import {
