@@ -6,7 +6,8 @@ import {
   ChartLoading, 
   ChartError, 
   ChartEmpty,
-  type ChartComponentProps
+  type ChartComponentProps,
+  chartConfig
 } from './chart-config';
 
 // Register only the necessary ChartJS components
@@ -51,6 +52,19 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
         ...defaultBarDataset,
         label: 'Energy Consumption (kWh)',
         data: sortedData.map(item => Number(item.totalEnergy.toFixed(2))),
+        backgroundColor: (context: any) => {
+          const chart = context.chart;
+          const { ctx, chartArea } = chart;
+          if (!chartArea) return chartConfig.colors.primary;
+          
+          const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+          gradient.addColorStop(0, chartConfig.colors.primary.replace(')', ', 0.5)'));
+          gradient.addColorStop(1, chartConfig.colors.primary.replace(')', ', 0.1)'));
+          return gradient;
+        },
+        borderColor: chartConfig.colors.primary,
+        borderWidth: 1,
+        borderRadius: 4,
       },
     ],
   };
@@ -63,9 +77,9 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
       legend: {
         position: 'top',
         labels: {
-          color: 'hsl(var(--muted-foreground))',
+          color: chartConfig.colors.muted,
           font: {
-            family: 'var(--font-sans)',
+            family: 'Inter, system-ui, sans-serif',
             size: 12,
           },
           padding: 20,
@@ -75,17 +89,19 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
       title: {
         display: true,
         text: title,
+        color: chartConfig.colors.foreground,
         font: {
           size: 16,
           weight: 500,
+          family: 'Inter, system-ui, sans-serif',
         },
         padding: { bottom: 16 },
       },
       tooltip: {
-        backgroundColor: 'hsl(var(--popover))',
-        titleColor: 'hsl(var(--foreground))',
-        bodyColor: 'hsl(var(--muted-foreground))',
-        borderColor: 'hsl(var(--border))',
+        backgroundColor: chartConfig.colors.card,
+        titleColor: chartConfig.colors.foreground,
+        bodyColor: chartConfig.colors.muted,
+        borderColor: chartConfig.colors.border,
         borderWidth: 1,
         padding: 12,
         usePointStyle: true,
@@ -102,18 +118,25 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
       x: {
         grid: {
           display: false,
+          color: chartConfig.colors.border,
         },
         ticks: {
-          color: 'hsl(var(--muted-foreground))',
+          color: chartConfig.colors.muted,
+          font: {
+            family: 'Inter, system-ui, sans-serif',
+          },
         },
       },
       y: {
         beginAtZero: true,
         grid: {
-          color: 'hsl(var(--border))',
+          color: chartConfig.colors.border,
         },
         ticks: {
-          color: 'hsl(var(--muted-foreground))',
+          color: chartConfig.colors.muted,
+          font: {
+            family: 'Inter, system-ui, sans-serif',
+          },
           callback: (value) => `${value} kWh` as string,
         },
       },
