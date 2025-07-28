@@ -1,82 +1,69 @@
 // frontend/src/components/dashboard/hooks/useDashboardData.ts
 
-import { useState, useCallback, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchDevices, type Device as RawDevice } from '../../../services/deviceService';
 import useAnalytics from '../../../hooks/useAnalytics';
+import type { TimeRange } from '../../../types/dashboard';
 
-type DashboardTimeRange = 'day' | '3days' | 'week';
-type DeviceChartTimeRange = 'day' | 'week' | 'month';
 type DeviceWithStatus = RawDevice & { status: 'online' };
 
-const mapToDeviceChartRange = (
-  range: DashboardTimeRange
-): DeviceChartTimeRange => (range === '3days' ? 'week' : range);
-
-export default function useDashboardData() {
-  const [timeRange, setTimeRange] = useState<DashboardTimeRange>('day');
+export default function useDashboardData(timeRange: TimeRange) {
+  // Selected device (persisted here so all sections can read it)
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
 
-  const chartTimeRange = useCallback(
-    (): DeviceChartTimeRange => mapToDeviceChartRange(timeRange),
-    [timeRange]
-  );
-
+  // Analytics (kWh totals + hourly) driven by the dashboard's timeRange
   const {
-    data: analyticsData = { topDevices: [], hourlyData: [] },
+    data: analyticsData = { topDevices: [], hourlyData: [], totalKwh: 0 },
     isLoading: isLoadingAnalytics,
     error,
-  } = useAnalytics(timeRange === 'day' ? 'day' : 'week');
+  } = useAnalytics(timeRange);
 
+  // Devices list
   const {
-    data: devicesData = [],
+    data: devices = [],
     isLoading: isLoadingDevices,
   } = useQuery<RawDevice[], Error, DeviceWithStatus[]>({
     queryKey: ['devices'],
     queryFn: fetchDevices,
     staleTime: 5 * 60 * 1000, // 5 minutes
-    select: (data) =>
-      data.map((device) => ({
-        ...device,
-        status: 'online', // force online for prototype
+    select: (rows) =>
+      rows.map((d) => ({
+        ...d,
+        status: 'online', // prototype: treat all as online
       })),
   });
 
-  const devices = devicesData;
-  const isLoading = isLoadingAnalytics || isLoadingDevices;
-
+  // Top devices with friendly names
   const devicesWithNames = useMemo(
     () =>
-      analyticsData.topDevices.map((device) => ({
-        ...device,
-        name:
-          devices.find((d) => d.id === device.deviceId)?.name ||
-          device.deviceId,
+      (analyticsData.topDevices ?? []).map((t) => ({
+        ...t,
+        name: devices.find((d) => d.id === t.deviceId)?.name || t.deviceId,
       })),
     [analyticsData.topDevices, devices]
   );
 
+  // Selected device object (for display)
   const selectedDevice = useMemo(() => {
-    if (selectedDeviceId === 'all') {
-      return { name: 'All Devices' };
-    }
-    return (
-      devices.find((d) => d.id === selectedDeviceId) || {
-        name: 'Unknown Device',
-      }
-    );
+    if (selectedDeviceId === 'all') return { name: 'All Devices' };
+    return devices.find((d) => d.id === selectedDeviceId) || { name: 'Unknown Device' };
   }, [selectedDeviceId, devices]);
 
+  const isLoading = isLoadingAnalytics || isLoadingDevices;
+
   return {
-    timeRange,
-    setTimeRange,
+    // selection
     selectedDeviceId,
     setSelectedDeviceId,
-    chartTimeRange,
+    selectedDevice,
+
+    // data
     analyticsData,
     devices,
     devicesWithNames,
-    selectedDevice,
+
+    // status
     isLoading,
     error,
   };
