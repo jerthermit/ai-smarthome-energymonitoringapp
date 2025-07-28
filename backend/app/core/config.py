@@ -21,7 +21,14 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "energy_monitor"
     DATABASE_URI: Optional[str] = None
-    
+
+    # Rate limiting
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60
+    RATE_LIMIT_TOKENS_PER_MINUTE: int = 10000
+
+    # Chat history cap (how many messages to send to LLM)
+    MAX_CHAT_HISTORY: int = 20
+
     class Config:
         case_sensitive = True
         env_file = ".env"
@@ -30,7 +37,12 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     if not settings.DATABASE_URI:
-        settings.DATABASE_URI = f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_SERVER}/{settings.POSTGRES_DB}"
+        settings.DATABASE_URI = (
+            f"postgresql://{settings.POSTGRES_USER}:"
+            f"{settings.POSTGRES_PASSWORD}@"
+            f"{settings.POSTGRES_SERVER}/"
+            f"{settings.POSTGRES_DB}"
+        )
     return settings
 
 settings = get_settings()
