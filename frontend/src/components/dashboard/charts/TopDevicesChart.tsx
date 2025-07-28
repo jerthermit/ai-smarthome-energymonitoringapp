@@ -1,10 +1,20 @@
+// frontend/src/components/dashboard/charts/TopDevicesChart.tsx
 import React from 'react';
 import { Bar } from 'react-chartjs-2';
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, type ChartOptions } from 'chart.js';
-import { 
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  type ChartOptions
+} from 'chart.js';
+import {
   defaultBarDataset,
-  ChartLoading, 
-  ChartError, 
+  ChartLoading,
+  ChartError,
   ChartEmpty,
   type ChartComponentProps,
   chartConfig
@@ -18,7 +28,7 @@ interface TopDevicesChartProps extends Omit<ChartComponentProps, 'children'> {
   isLoading: boolean;
   error: Error | null;
   maxItems?: number;
-  title?: string;
+  /** Chart-level title is intentionally NOT displayed. Use the section header instead. */
   className?: string;
   style?: React.CSSProperties;
 }
@@ -29,12 +39,9 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
     isLoading = false,
     error = null,
     maxItems = 5,
-    title = 'Top Energy Consuming Devices',
     className = '',
     style = {},
   } = props;
-  // Handle loading and error states
-
 
   if (isLoading) return <ChartLoading className={className} style={style} />;
   if (error) return <ChartError error={error} className={className} style={style} />;
@@ -46,17 +53,17 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
     .slice(0, maxItems);
 
   const chartData = {
-    labels: sortedData.map(item => item.name || `Device ${item.deviceId.slice(0, 6)}`),
+    labels: sortedData.map((item) => item.name || `Device ${item.deviceId.slice(0, 6)}`),
     datasets: [
       {
         ...defaultBarDataset,
         label: 'Energy Consumption (kWh)',
-        data: sortedData.map(item => Number(item.totalEnergy.toFixed(2))),
+        data: sortedData.map((item) => Number(item.totalEnergy.toFixed(2))),
         backgroundColor: (context: any) => {
           const chart = context.chart;
           const { ctx, chartArea } = chart;
           if (!chartArea) return chartConfig.colors.primary;
-          
+
           const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
           gradient.addColorStop(0, chartConfig.colors.primary.replace(')', ', 0.5)'));
           gradient.addColorStop(1, chartConfig.colors.primary.replace(')', ', 0.1)'));
@@ -69,11 +76,16 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
     ],
   };
 
-  // Create a new options object with proper typing
+  // Chart options with **no internal title**
   const options: ChartOptions<'bar'> = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
+      // Title explicitly disabled — section header will provide the title.
+      title: {
+        display: false,
+        text: '',
+      },
       legend: {
         position: 'top',
         labels: {
@@ -85,17 +97,6 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
           padding: 20,
           usePointStyle: true,
         },
-      },
-      title: {
-        display: true,
-        text: title,
-        color: chartConfig.colors.foreground,
-        font: {
-          size: 16,
-          weight: 500,
-          family: 'Inter, system-ui, sans-serif',
-        },
-        padding: { bottom: 16 },
       },
       tooltip: {
         backgroundColor: chartConfig.colors.card,
@@ -116,27 +117,18 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
     },
     scales: {
       x: {
-        grid: {
-          display: false,
-          color: chartConfig.colors.border,
-        },
+        grid: { display: false, color: chartConfig.colors.border },
         ticks: {
           color: chartConfig.colors.muted,
-          font: {
-            family: 'Inter, system-ui, sans-serif',
-          },
+          font: { family: 'Inter, system-ui, sans-serif' },
         },
       },
       y: {
         beginAtZero: true,
-        grid: {
-          color: chartConfig.colors.border,
-        },
+        grid: { color: chartConfig.colors.border },
         ticks: {
           color: chartConfig.colors.muted,
-          font: {
-            family: 'Inter, system-ui, sans-serif',
-          },
+          font: { family: 'Inter, system-ui, sans-serif' },
           callback: (value) => `${value} kWh` as string,
         },
       },
@@ -145,11 +137,7 @@ const TopDevicesChart: React.FC<TopDevicesChartProps> = (props) => {
 
   return (
     <div className={`h-[400px] w-full ${className}`} style={style}>
-      <Bar 
-        options={options} 
-        data={chartData} 
-        fallbackContent={<div>Loading chart data...</div>}
-      />
+      <Bar options={options} data={chartData} fallbackContent={<div>Loading chart data...</div>} />
     </div>
   );
 };

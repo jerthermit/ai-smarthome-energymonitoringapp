@@ -45,13 +45,15 @@ const TopConsumersSection: React.FC<TopConsumersSectionProps> = ({
             <Activity className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
           <div>
-            <CardTitle className="text-base sm:text-lg">Top Energy Consumers</CardTitle>
+            {/* Updated section title */}
+            <CardTitle className="text-base sm:text-lg">Top Energy Consuming Devices</CardTitle>
             <CardDescription className="text-xs sm:text-sm">
-              {label}'s highest consumers
+              {label}’s highest consumers
             </CardDescription>
           </div>
         </div>
       </CardHeader>
+
       <CardContent className="flex-1 min-h-[280px] sm:min-h-[320px] px-4 pb-4 sm:px-6 sm:pb-6">
         <TopDevicesChart
           data={data}
