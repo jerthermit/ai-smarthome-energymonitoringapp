@@ -9,7 +9,7 @@ import KeyMetrics from './sections/KeyMetrics';
 import HourlySummarySection from './sections/HourlySummarySection';
 import TopConsumersSection from './sections/TopConsumersSection';
 import DeviceEnergySection from './sections/DeviceEnergySection';
-import DeviceListSection from './sections/DeviceListSection';
+import ScrollToTop from '../ui/ScrollToTop';
 import useDashboardData from './hooks/useDashboardData';
 
 type DashboardTimeRange = 'day' | '3days' | 'week';
@@ -58,48 +58,64 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 min-h-screen bg-gradient-to-br from-background to-muted/20 p-3 sm:p-4 md:p-6 lg:p-8 pt-4 sm:pt-6">
-      <Header />
+    <div className="flex-1 min-h-screen bg-gradient-to-br from-background to-muted/20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        <Header />
 
-      <TimeRangeTabs
-        options={timeRangeOptions}
-        value={timeRange}
-        onChange={setTimeRange}
-      />
 
-      <KeyMetrics
-        devices={devices}
-        hourlyData={analyticsData.hourlyData}
-        isLoading={isLoading}
-      />
 
-      <HourlySummarySection
-        data={analyticsData.hourlyData}
-        isLoading={isLoading}
-        error={error}
-      />
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+          <div className="lg:col-span-2">
+            <HourlySummarySection
+              data={analyticsData.hourlyData}
+              isLoading={isLoading}
+              error={error}
+            />
+          </div>
 
-      <TopConsumersSection
-        data={devicesWithNames}
-        timeRange={timeRange}
-        isLoading={isLoading}
-        error={error}
-      />
+          <div className="h-full">
+            <KeyMetrics
+              devices={devices}
+              hourlyData={analyticsData.hourlyData}
+              isLoading={isLoading}
+              showCurrentUsage={true}
+              showTotalToday={true}
+            />
+          </div>
 
-      <DeviceEnergySection
-        devices={devices}
-        selectedDeviceId={selectedDeviceId}
-        onSelectDevice={setSelectedDeviceId}
-        timeRange={chartTimeRange()}
-        selectedDeviceName={selectedDevice.name}
-      />
+          <div className="h-full">
+            <div className="flex flex-col space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold">Top Energy Consumers</h3>
+                <TimeRangeTabs
+                  value={timeRange}
+                  onChange={setTimeRange}
+                  options={timeRangeOptions}
+                />
+              </div>
+              <TopConsumersSection
+                data={devicesWithNames}
+                isLoading={isLoading}
+                timeRange={timeRange}
+                error={error}
+              />
+            </div>
+          </div>
 
-      <DeviceListSection
-        devices={devices}
-        selectedDeviceId={selectedDeviceId}
-        onSelectDevice={setSelectedDeviceId}
-        isLoading={isLoading}
-      />
+          <div className="lg:col-span-2">
+            <DeviceEnergySection
+              devices={devices}
+              selectedDeviceId={selectedDeviceId}
+              onSelectDevice={setSelectedDeviceId}
+              timeRange={chartTimeRange()}
+              selectedDeviceName={selectedDevice.name}
+              showDeviceList={true}
+              isLoading={isLoading}
+            />
+          </div>
+        </div>
+        <ScrollToTop />
+      </div>
     </div>
   );
 };

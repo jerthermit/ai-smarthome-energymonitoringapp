@@ -14,7 +14,7 @@ const mapToDeviceChartRange = (
 ): DeviceChartTimeRange => (range === '3days' ? 'week' : range);
 
 export default function useDashboardData() {
-  const [timeRange, setTimeRange] = useState<DashboardTimeRange>('week');
+  const [timeRange, setTimeRange] = useState<DashboardTimeRange>('day');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
 
   const chartTimeRange = useCallback(
