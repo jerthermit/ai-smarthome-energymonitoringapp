@@ -1,9 +1,18 @@
-from datetime import datetime
-from typing import List, Optional
+# backend/app/telemetry/service.py
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Dict, Any
+
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from . import models, schemas
+
+# Cap very large gaps to avoid overstating energy during outages
+DEFAULT_MAX_GAP_SECONDS = 15 * 60  # 15 minutes
+
 
 def create_telemetry(db: Session, telemetry: schemas.TelemetryCreate) -> models.Telemetry:
     """Create a new telemetry reading"""
@@ -17,21 +26,23 @@ def create_telemetry(db: Session, telemetry: schemas.TelemetryCreate) -> models.
     db.refresh(db_telemetry)
     return db_telemetry
 
+
 def get_telemetry(
     db: Session,
     query: schemas.TelemetryQuery
 ) -> List[models.Telemetry]:
     """Query telemetry data with filters"""
     q = db.query(models.Telemetry)
-    
+
     if query.device_id:
         q = q.filter(models.Telemetry.device_id == query.device_id)
     if query.start_time:
         q = q.filter(models.Telemetry.timestamp >= query.start_time)
     if query.end_time:
         q = q.filter(models.Telemetry.timestamp <= query.end_time)
-    
+
     return q.order_by(models.Telemetry.timestamp.desc()).limit(query.limit).all()
+
 
 def create_device(db: Session, device: schemas.DeviceCreate, user_id: int) -> models.Device:
     """Create a new device"""
@@ -44,9 +55,11 @@ def create_device(db: Session, device: schemas.DeviceCreate, user_id: int) -> mo
     db.refresh(db_device)
     return db_device
 
+
 def get_user_devices(db: Session, user_id: int) -> List[models.Device]:
     """Get all devices for a user"""
     return db.query(models.Device).filter(models.Device.user_id == user_id).all()
+
 
 def get_device(db: Session, device_id: str, user_id: int) -> Optional[models.Device]:
     """Get a specific device for a user"""
@@ -55,96 +68,123 @@ def get_device(db: Session, device_id: str, user_id: int) -> Optional[models.Dev
         models.Device.user_id == user_id
     ).first()
 
+
 def get_aggregate_telemetry(
     db: Session,
     query: schemas.AggregateQuery,
     user_id: int
 ) -> List[schemas.AggregateDataPoint]:
     """
-    Get aggregated telemetry data for visualization
-    
-    Args:
-        db: Database session
-        query: Query parameters including time range and resolution
-        user_id: ID of the user making the request
-        
-    Returns:
-        List of aggregated data points with timestamps and values
+    Get aggregated telemetry data for visualization (energy, not raw watts).
+
+    Integrates instantaneous power (W) over time to compute energy (Wh),
+    using TimescaleDB window functions + time_bucket, then aggregates to
+    the requested resolution.
+
+    Returns a list of buckets with:
+      - timestamp: bucket start (UTC)
+      - value: total energy in Wh (schema enforces > 0)
+      - device_count: number of active devices in the bucket
     """
-    from sqlalchemy import func, text
-    from datetime import datetime, timedelta
-    
-    # Calculate time window based on the selected range
-    now = datetime.utcnow()
-    time_windows = {
-        schemas.TimeRange.HOUR: now - timedelta(hours=1),
-        schemas.TimeRange.DAY: now - timedelta(days=1),
-        schemas.TimeRange.WEEK: now - timedelta(weeks=1),
-        schemas.TimeRange.MONTH: now - timedelta(days=30)
+    # ---- Determine window from TimeRange enum ----
+    now = datetime.now(timezone.utc)
+    if query.time_range == schemas.TimeRange.HOUR:
+        start_time = now - timedelta(hours=1)
+    elif query.time_range == schemas.TimeRange.DAY:
+        start_time = now - timedelta(days=1)
+    elif query.time_range == schemas.TimeRange.WEEK:
+        start_time = now - timedelta(weeks=1)
+    elif query.time_range == schemas.TimeRange.MONTH:
+        start_time = now - timedelta(days=30)
+    else:
+        start_time = now - timedelta(days=1)
+
+    end_time = now
+
+    # ---- Build bucket string for time_bucket ----
+    # Clamp to 1..1440 (already validated by schema)
+    res_minutes = int(query.resolution_minutes)
+    bucket = f"{res_minutes} minutes"
+
+    # ---- Optional device filter ----
+    device_filter_sql = ""
+    params: Dict[str, Any] = {
+        "user_id": user_id,
+        "start_time": start_time,
+        "end_time": end_time,
+        "bucket": bucket,
+        "max_gap_seconds": DEFAULT_MAX_GAP_SECONDS,
     }
-    
-    start_time = time_windows.get(query.time_range, now - timedelta(days=1))
-    
-    # Build the base query
-    base_query = db.query(
-        func.date_trunc('minute', models.Telemetry.timestamp).label('time_bucket'),
-        func.sum(models.Telemetry.energy_watts).label('total_energy'),
-        func.count(models.Telemetry.device_id.distinct()).label('device_count')
-    ).join(
-        models.Device,
-        models.Device.id == models.Telemetry.device_id
-    ).filter(
-        models.Device.user_id == user_id,
-        models.Telemetry.timestamp >= start_time
+    if query.device_ids:
+        device_filter_sql = " AND t.device_id = ANY(:device_ids) "
+        params["device_ids"] = query.device_ids
+
+    # ---- SQL: integrate W -> Wh per device, per bucket ----
+    # We model each interval [prev_ts, ts) with the previous power reading.
+    # Δt is capped to avoid runaway energy when readings pause.
+    sql = f"""
+    WITH filtered AS (
+        SELECT
+            t.device_id,
+            t.timestamp,
+            t.energy_watts AS power_w,
+            LAG(t.timestamp) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_ts,
+            LAG(t.energy_watts) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_w
+        FROM telemetry t
+        JOIN devices d ON d.id = t.device_id
+        WHERE d.user_id = :user_id
+          AND t.timestamp >= :start_time
+          AND t.timestamp <= :end_time
+          {device_filter_sql}
+    ),
+    intervals AS (
+        SELECT
+            device_id,
+            timestamp,
+            COALESCE(prev_w, power_w) AS power_w_for_interval,
+            EXTRACT(EPOCH FROM (timestamp - prev_ts)) AS delta_s
+        FROM filtered
+    ),
+    intervals_capped AS (
+        SELECT
+            device_id,
+            timestamp,
+            power_w_for_interval,
+            GREATEST(0, LEAST(:max_gap_seconds, COALESCE(delta_s, 0))) AS delta_s
+        FROM intervals
+    ),
+    per_bucket AS (
+        SELECT
+            time_bucket(:bucket, timestamp) AS bucket,
+            SUM(power_w_for_interval * delta_s / 3600.0) AS energy_wh,
+            COUNT(DISTINCT device_id) AS device_count
+        FROM intervals_capped
+        GROUP BY bucket
     )
-    
-    # Apply device filter if specified
-    if query.device_ids:
-        base_query = base_query.filter(models.Telemetry.device_id.in_(query.device_ids))
-    
-    # Add time bucketing and grouping
-    time_bucket = f"{query.resolution_minutes} minutes"
-    
-    # Build the base SQL query
-    sql = """
-    SELECT 
-        time_bucket(:time_bucket, timestamp) as bucket,
-        SUM(energy_watts) as total_energy,
-        COUNT(DISTINCT device_id) as device_count
-    FROM telemetry
-    JOIN devices ON telemetry.device_id = devices.id
-    WHERE 
-        devices.user_id = :user_id 
-        AND timestamp >= :start_time
+    SELECT
+        bucket,
+        energy_wh,
+        device_count
+    FROM per_bucket
+    ORDER BY bucket;
     """
-    
-    # Initialize parameters
-    params = {
-        'time_bucket': time_bucket,
-        'user_id': user_id,
-        'start_time': start_time
-    }
-    
-    # Add device filter if needed
-    if query.device_ids:
-        sql += " AND device_id = ANY(:device_ids)"
-        params['device_ids'] = query.device_ids
-    
-    # Complete the SQL query
-    sql += """
-    GROUP BY bucket
-    ORDER BY bucket
-    """
-    
-    # Execute raw SQL for time_bucket function
-    result = db.execute(text(sql), params)
-    
-    # Convert to Pydantic models
-    return [
-        schemas.AggregateDataPoint(
-            timestamp=row.bucket,
-            value=row.total_energy or 0,
-            device_count=row.device_count
+
+    rows = db.execute(text(sql), params).fetchall()
+
+    # ---- Map to response objects (skip zero buckets to satisfy value > 0) ----
+    out: List[schemas.AggregateDataPoint] = []
+    for r in rows:
+        e_wh = float(r.energy_wh or 0.0)
+        if e_wh <= 0:
+            # Your schema enforces value > 0 (condecimal(gt=0)),
+            # so we skip zero-energy buckets instead of sending 0.
+            continue
+        out.append(
+            schemas.AggregateDataPoint(
+                timestamp=r.bucket,  # DB returns timestamptz
+                value=e_wh,
+                device_count=int(r.device_count or 0),
+            )
         )
-        for row in result
-    ]
+
+    return out
