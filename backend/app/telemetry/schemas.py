@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field, validator
-from datetime import datetime
-from typing import Optional, List
+from pydantic import BaseModel, Field, validator, condecimal
+from datetime import datetime, timedelta
+from typing import Optional, List, Literal
 import uuid
+from enum import Enum
 
 class TelemetryBase(BaseModel):
     device_id: str = Field(..., alias="deviceId")
@@ -47,3 +48,33 @@ class DeviceInDB(DeviceBase):
 
     class Config:
         from_attributes = True
+
+class TimeRange(str, Enum):
+    HOUR = "hour"
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+class AggregateDataPoint(BaseModel):
+    timestamp: datetime
+    value: condecimal(gt=0)  # Ensure positive values
+    device_count: int
+
+class AggregateQuery(BaseModel):
+    time_range: TimeRange = TimeRange.DAY
+    resolution_minutes: int = Field(15, ge=1, le=1440)  # 1 minute to 24 hours
+    device_ids: Optional[List[str]] = None  # None means all devices
+    
+    @validator('resolution_minutes')
+    def validate_resolution(cls, v, values):
+        time_range = values.get('time_range')
+        max_resolution = {
+            TimeRange.HOUR: 1,
+            TimeRange.DAY: 15,
+            TimeRange.WEEK: 60,
+            TimeRange.MONTH: 240
+        }.get(time_range, 15)
+        
+        if v < max_resolution:
+            raise ValueError(f"Resolution too high for {time_range} range. Minimum is {max_resolution} minutes.")
+        return v

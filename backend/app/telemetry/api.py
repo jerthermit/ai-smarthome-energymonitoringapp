@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from typing import List, Optional
+from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.security import get_current_active_user
@@ -76,3 +78,45 @@ async def get_device(
             detail="Device not found or access denied"
         )
     return device
+
+@router.get("/aggregate", response_model=List[schemas.AggregateDataPoint])
+async def get_aggregate_telemetry(
+    time_range: schemas.TimeRange = Query(
+        schemas.TimeRange.DAY,
+        description="Time range for the aggregation"
+    ),
+    resolution_minutes: int = Query(
+        15,
+        ge=1,
+        le=1440,
+        description="Resolution in minutes (1-1440)"
+    ),
+    device_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter by specific device IDs (comma-separated)"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get aggregated telemetry data for visualization
+    
+    Returns time-series data of total energy consumption across all or selected devices,
+    aggregated into fixed time intervals.
+    """
+    try:
+        query = schemas.AggregateQuery(
+            time_range=time_range,
+            resolution_minutes=resolution_minutes,
+            device_ids=device_ids
+        )
+        return service.get_aggregate_telemetry(
+            db=db,
+            query=query,
+            user_id=current_user.id
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
