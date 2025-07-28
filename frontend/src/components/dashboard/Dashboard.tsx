@@ -1,6 +1,8 @@
 // frontend/src/components/dashboard/Dashboard.tsx
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
+import type { TimeRange } from '../../types/dashboard';
+import { TIME_RANGE_OPTIONS } from '../../types/dashboard';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/button';
 import Header from './sections/Header';
@@ -13,36 +15,28 @@ import DeviceEnergySection from './sections/DeviceEnergySection';
 import ScrollToTop from '../ui/ScrollToTop';
 import useDashboardData from './hooks/useDashboardData';
 
-type DashboardTimeRange = 'day' | '3days' | 'week';
-
-type TimeRange = 'hour' | 'day' | 'week' | 'month';
-
-const timeRangeOptions: { value: DashboardTimeRange; label: string }[] = [
-  { value: 'day',   label: 'Today' },
-  { value: '3days', label: 'Last 3 Days' },
-  { value: 'week',  label: 'Last 7 Days' },
-];
-
-// Convert DashboardTimeRange to TimeRange (maps '3days' to 'day')
-const toTimeRange = (range: DashboardTimeRange): TimeRange => {
-  if (range === '3days') return 'day';
-  return range as TimeRange;
-};
+// Using TimeRange from types/dashboard
 
 const Dashboard: React.FC = () => {
   const {
-    timeRange,
-    setTimeRange,
     selectedDeviceId,
     setSelectedDeviceId,
-    analyticsData,
     devices,
+    analyticsData,
     devicesWithNames,
     selectedDevice,
     isLoading,
     error,
-    chartTimeRange,
   } = useDashboardData();
+  
+  const [timeRange, setTimeRange] = useState<TimeRange>('week'); // Default to 7-day view
+  
+  // Handle time range change
+  const handleTimeRangeChange = useCallback((newRange: TimeRange) => {
+    setTimeRange(newRange);
+    // The dashboard data will automatically update when time range changes
+    // due to the timeRange dependency in the useDashboardData hook
+  }, []);
 
   if (error) {
     return (
@@ -73,45 +67,35 @@ const Dashboard: React.FC = () => {
 
 
 
-        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-          <div className="lg:col-span-2">
+        <div className="grid gap-6 grid-cols-1">
+          <div className="col-span-1">
             <HourlySummarySection
               data={analyticsData.hourlyData}
               isLoading={isLoading}
               error={error}
             />
           </div>
-          
 
-
-          <div className="h-full">
-            <KeyMetrics
-              devices={devices}
-              hourlyData={analyticsData.hourlyData}
-              isLoading={isLoading}
-              showCurrentUsage={true}
-              showTotalToday={true}
-            />
-          </div>
-
-<div className="lg:col-span-2">
+          {/* Main Content Area */}
+          <div className="lg:col-span-2">
             <div className="flex flex-col space-y-6">
-              {/* Aggregate Chart Section */}
-              <div className="space-y-2">
+              {/* Time Range Tabs and Total Usage */}
+              <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold">Energy Consumption</h3>
                   <TimeRangeTabs
+                    options={TIME_RANGE_OPTIONS}
                     value={timeRange}
-                    onChange={setTimeRange}
-                    options={timeRangeOptions}
+                    onChange={handleTimeRangeChange}
                   />
                 </div>
-                <div className="bg-card rounded-lg border p-4">
-                  <AggregateConsumptionSection 
-                    timeRange={toTimeRange(timeRange)}
-                    deviceIds={selectedDeviceId !== 'all' ? [selectedDeviceId] : undefined}
-                  />
-                </div>
+                
+                {/* Moved Total Usage Card Here */}
+                <AggregateConsumptionSection 
+                  timeRange={timeRange} // Using the dashboard's timeRange directly
+                  deviceIds={selectedDeviceId !== 'all' ? [selectedDeviceId] : undefined}
+                  className="w-full"
+                />
               </div>
 
               {/* Top Consumers Section */}
@@ -134,11 +118,12 @@ const Dashboard: React.FC = () => {
               devices={devices}
               selectedDeviceId={selectedDeviceId}
               onSelectDevice={setSelectedDeviceId}
-              timeRange={chartTimeRange()}
-              selectedDeviceName={selectedDevice.name}
+              timeRange={timeRange === '3days' ? 'week' : timeRange} // Map '3days' to 'week' for the chart
+              selectedDeviceName={selectedDevice?.name || 'All Devices'}
               showDeviceList={true}
               isLoading={isLoading}
             />
+            {/* Refresh button removed as it's not part of the current implementation */}
           </div>
         </div>
         <ScrollToTop />
