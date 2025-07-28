@@ -41,6 +41,7 @@ interface DeviceEnergyChartProps {
   deviceId: string | 'all';
   timeRange: TimeRange;
   deviceName?: string;
+  height?: number | string;
 }
 
 const fetchDeviceTelemetry = async (deviceId: string, timeRange: TimeRange): Promise<DeviceTelemetryData[]> => {
@@ -198,7 +199,8 @@ const chartOptions: ChartOptions<'line'> = {
 const DeviceEnergyChart: React.FC<DeviceEnergyChartProps> = ({ 
   deviceId, 
   timeRange,
-  deviceName = 'All Devices' 
+  deviceName = 'All Devices',
+  height = 300
 }) => {
   const { data, isLoading, error } = useQuery({
     queryKey: ['deviceEnergy', deviceId, timeRange],
@@ -207,13 +209,17 @@ const DeviceEnergyChart: React.FC<DeviceEnergyChartProps> = ({
   });
 
   if (isLoading) {
-    return <Skeleton className="w-full h-[400px]" />;
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <Skeleton className="h-full w-full" />
+      </div>
+    );
   }
 
   if (error) {
     return (
-      <div className="text-center p-4 text-destructive">
-        Error loading energy data: {error instanceof Error ? error.message : 'Unknown error'}
+      <div className="w-full h-full flex items-center justify-center text-destructive">
+        Error loading chart data
       </div>
     );
   }
