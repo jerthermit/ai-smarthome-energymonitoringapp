@@ -2,16 +2,12 @@
 
 import React from 'react';
 import { Tabs, TabsList, TabsTrigger } from '../../ui/tabs';
-
-export type TimeRangeOption = {
-  value: 'day' | '3days' | 'week';
-  label: string;
-};
+import type { TimeRange, DashboardTimeRangeOption } from '../../../types/dashboard';
 
 interface TimeRangeTabsProps {
-  options: TimeRangeOption[];
-  value: 'day' | '3days' | 'week';
-  onChange: (newValue: 'day' | '3days' | 'week') => void;
+  options: DashboardTimeRangeOption[];
+  value: TimeRange;
+  onChange: (newValue: TimeRange) => void;
 }
 
 const TimeRangeTabs: React.FC<TimeRangeTabsProps> = ({ options, value, onChange }) => (
