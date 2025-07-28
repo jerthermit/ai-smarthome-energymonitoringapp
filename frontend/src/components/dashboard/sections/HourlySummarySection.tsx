@@ -1,15 +1,9 @@
 // frontend/src/components/dashboard/sections/HourlySummarySection.tsx
 
 import React from 'react';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-} from '../../ui/card';
-import { BarChart3 } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/card';
 import HourlySummaryChart from '../../../components/charts/HourlySummaryChart';
+import { Clock } from 'lucide-react';
 
 interface HourlyData {
   hour: number;
@@ -27,33 +21,21 @@ const HourlySummarySection: React.FC<HourlySummarySectionProps> = ({
   isLoading,
   error,
 }) => (
-  <section>
-    <div className="mb-3 sm:mb-4">
-      <h2 className="text-lg sm:text-xl font-semibold text-foreground">
-        Hourly Analysis
-      </h2>
-      <p className="text-xs sm:text-sm text-muted-foreground">
-        Breakdown of energy usage throughout the day
-      </p>
-    </div>
+  <section className="mb-6 sm:mb-8">
     <Card className="border shadow-sm hover:shadow-md transition-shadow duration-200">
-      <CardHeader className="pb-2 px-4 sm:px-6 pt-4 sm:pt-6">
+      <CardHeader className="pb-2">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 sm:p-2 rounded-lg bg-secondary/10 text-secondary-foreground">
-            <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5" />
+          <div className="p-1.5 rounded-lg bg-primary/10">
+            <Clock className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <CardTitle className="text-base sm:text-lg">
-              Hourly Energy Consumption
-            </CardTitle>
-            <CardDescription className="text-xs sm:text-sm">
-              Average energy usage by hour of day
-            </CardDescription>
+            <CardTitle className="text-lg">Hourly Energy Consumption</CardTitle>
+            <CardDescription>Energy usage patterns throughout the day</CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="h-64 sm:h-72 md:h-80">
-        <div className="h-full w-full">
+      <CardContent>
+        <div className="h-64 sm:h-72 md:h-80">
           <HourlySummaryChart
             data={data}
             isLoading={isLoading}
