@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react';
 import type { AIMessage } from '../services/aiService';
 import { sendMessage, formatMessage } from '../services/aiService';
 
+const MAX_CHAT_HISTORY = 20; // only send the last N messages to backend
+
 export const useChat = () => {
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -14,20 +16,32 @@ export const useChat = () => {
   }, []);
 
   const submitMessage = useCallback(async (content: string) => {
-    if (!content.trim()) return;
-    
-    const userMessage = addMessage(content, 'user');
+    const trimmed = content.trim();
+    if (!trimmed) return;
+
+    // 1) add the user message to local state immediately
+    const userMessage = addMessage(trimmed, 'user');
+
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await sendMessage([...messages, userMessage]);
-      if (response.choices && response.choices.length > 0) {
-        const assistantMessage = response.choices[0].message.content;
-        addMessage(assistantMessage, 'assistant');
-      } else {
-        throw new Error('Received an empty or invalid response from the AI.');
-      }
+      // 2) clip the conversation to the last N messages BEFORE sending
+      const next = [...messages, userMessage];
+      const clipped = next.slice(-MAX_CHAT_HISTORY);
+
+      // 3) send only the clipped history to the backend
+      const response = await sendMessage(clipped);
+
+      // 4) append assistant message from response
+      const assistantContent =
+        response?.choices?.[0]?.message?.content ??
+        'Sorry, I could not generate a response.';
+      addMessage(assistantContent, 'assistant');
+
+      // (Optional) if you use energy_data in your UI, you can return `response`
+      // and handle it where you render the chat.
+      return response;
     } catch (err) {
       console.error('Error in chat:', err);
       setError(err instanceof Error ? err : new Error('Failed to get response from AI'));

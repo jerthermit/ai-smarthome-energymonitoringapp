@@ -12,9 +12,9 @@ import {
   Filler,
 } from 'chart.js';
 import type { ChartData, ChartOptions, ScriptableContext } from 'chart.js';
-import { chartConfig } from '../dashboard/charts/chart-config';
-import { useEnergyData } from '../../hooks/useTelemetryData';
-import type { TelemetryData, TimeRange } from '../../hooks/useTelemetryData';
+import { chartConfig } from './chart-config';
+import { useTelemetryData } from '../../../hooks/useTelemetryData';
+import type { TelemetryData, TimeRange } from '../../../hooks/useTelemetryData';
 
 // Register ChartJS components
 ChartJS.register(
@@ -239,7 +239,7 @@ const EnergyUsageChart: React.FC<EnergyUsageChartProps> = ({
     error,
     isUsingWebSocket = false,
     lastUpdated = new Date()
-  } = useEnergyData(timeRange, { deviceId, realtime: true });
+  } = useTelemetryData(timeRange, { deviceId, realtime: true });
   
   const chartData = processChartData(telemetryData, timeRange);
 
