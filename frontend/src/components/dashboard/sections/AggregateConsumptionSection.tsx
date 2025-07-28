@@ -1,10 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+// frontend/src/components/dashboard/sections/AggregateConsumptionSection.tsx
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Zap } from 'lucide-react';
-import { useTelemetryData } from '../../../hooks/useTelemetryData';
 import { Skeleton } from '../../ui/skeleton';
+import type { TimeRange } from '../../../types/dashboard';
+import useAnalytics from '../../../hooks/useAnalytics';
+import api from '../../../services/api';
 
-// Custom hook for counting animation
-const useAnimatedCounter = (target: string, duration: number = 1000) => {
+type EnergySummaryRow = { deviceId: string; energyKwh: number };
+
+const useAnimatedCounter = (target: string, duration: number = 800) => {
   const [displayValue, setDisplayValue] = useState('0.00');
   const animationRef = useRef<number | null>(null);
   const startValue = useRef<number>(0);
@@ -14,72 +18,82 @@ const useAnimatedCounter = (target: string, duration: number = 1000) => {
   useEffect(() => {
     const newTargetValue = parseFloat(target) || 0;
     if (newTargetValue === targetValue.current) return;
-    
-    // Store the starting value and time
+
     startValue.current = parseFloat(displayValue) || 0;
     targetValue.current = newTargetValue;
     startTime.current = performance.now();
-    
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-    }
-    
+
+    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+
     const animate = (currentTime: number) => {
       const elapsedTime = currentTime - startTime.current;
       const progress = Math.min(elapsedTime / duration, 1);
-      
-      // Ease out function for smooth animation
       const easeOut = 1 - Math.pow(1 - progress, 3);
       const currentValue = startValue.current + (targetValue.current - startValue.current) * easeOut;
-      
+
       setDisplayValue(currentValue.toFixed(2));
-      
+
       if (progress < 1) {
         animationRef.current = requestAnimationFrame(animate);
       } else {
-        setDisplayValue(target); // Ensure we end exactly at the target
+        setDisplayValue(target);
       }
     };
-    
+
     animationRef.current = requestAnimationFrame(animate);
-    
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [target, duration]);
-  
+
   return displayValue;
 };
 
-// Simple number formatter utility
-const formatNumber = (num: number, decimals: number = 2): string => {
-  return num.toLocaleString(undefined, {
+const formatNumber = (num: number, decimals: number = 2): string =>
+  num.toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: decimals,
   });
+
+const RANGE_LABEL: Record<TimeRange, string> = {
+  day: 'Today',
+  '3days': 'Last 3 Days',
+  week: 'Last 7 Days',
 };
 
-// Define time range types
-type TimeRange = 'day' | '3days' | 'week' | 'month';
+function computeWindow(nowLocal = new Date(), range: TimeRange) {
+  const end = new Date(nowLocal);
+  const start = new Date(end);
+  switch (range) {
+    case 'day':
+      start.setDate(end.getDate() - 1);
+      break;
+    case '3days':
+      start.setDate(end.getDate() - 3);
+      break;
+    case 'week':
+      start.setDate(end.getDate() - 7);
+      break;
+  }
+  return { start, end };
+}
 
-type TimeRangeConfig = {
-  label: string;
-  telemetryRange: 'day' | 'week' | 'month';
-  days: number;
-};
-
-const timeRangeConfigs: Record<TimeRange, TimeRangeConfig> = {
-  day: { label: 'Today', telemetryRange: 'day', days: 1 },
-  '3days': { label: 'Last 3 Days', telemetryRange: 'day', days: 3 },
-  week: { label: 'This Week', telemetryRange: 'week', days: 7 },
-  month: { label: 'This Month', telemetryRange: 'month', days: 30 },
-};
+/** Backend-integrated kWh for a specific device over [start,end). */
+async function fetchSingleDeviceKwh(range: TimeRange, deviceId: string): Promise<number> {
+  const { start, end } = computeWindow(new Date(), range);
+  const params = {
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    device_ids: deviceId, // backend accepts comma-separated; single is fine
+  };
+  const { data } = await api.get<EnergySummaryRow[]>('/telemetry/energy_summary', { params });
+  const kwh = (data?.[0]?.energyKwh ?? 0);
+  return Number(kwh.toFixed(2));
+}
 
 interface AggregateConsumptionSectionProps {
-  timeRange?: TimeRange;
-  deviceIds?: string[];
+  timeRange?: TimeRange;      // 'day' | '3days' | 'week'
+  deviceIds?: string[];       // optional single device filter
   className?: string;
 }
 
@@ -88,31 +102,56 @@ const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = 
   deviceIds,
   className = '',
 }) => {
-  const config = timeRangeConfigs[timeRange] || timeRangeConfigs.day;
   const deviceId = deviceIds && deviceIds.length > 0 ? deviceIds[0] : undefined;
-  
-  const { data: telemetryData, isLoading, error } = useTelemetryData(
-    config.telemetryRange, 
-    { deviceId, realtime: false }
-  );
 
-  // Calculate total energy consumption in watt-hours
-  const totalEnergyWh = React.useMemo(() => {
-    if (!telemetryData || telemetryData.length === 0) return 0;
-    
-    // For multi-day ranges, we need to adjust the total based on the number of days
-    const dailyTotal = telemetryData.reduce((sum, item) => sum + item.energyWatts, 0);
-    
-    // If we have a multi-day range, multiply by the number of days
-    // This is a simplification - for more accuracy, we'd need to know the exact time range of the data
-    return dailyTotal * config.days;
-  }, [telemetryData, config.days]);
-  
-  // Convert to kWh with 2 decimal places and format as string
-  const totalEnergyKwh = (totalEnergyWh / 1000).toFixed(2);
-  
-  // Use the animated counter
-  const animatedValue = useAnimatedCounter(totalEnergyKwh, 1000);
+  // All-devices total via analytics (already accurate & integrated)
+  const {
+    data: analytics = { topDevices: [], hourlyData: [], totalKwh: 0 },
+    isLoading: isAnalyticsLoading,
+    error: analyticsError,
+  } = useAnalytics(timeRange);
+
+  // Single-device total via backend energy_summary
+  const [singleDeviceKwh, setSingleDeviceKwh] = useState<number>(0);
+  const [isSingleLoading, setIsSingleLoading] = useState<boolean>(false);
+  const [singleError, setSingleError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!deviceId) {
+      setSingleDeviceKwh(0);
+      setIsSingleLoading(false);
+      setSingleError(null);
+      return;
+    }
+    setIsSingleLoading(true);
+    setSingleError(null);
+    fetchSingleDeviceKwh(timeRange, deviceId)
+      .then((kwh) => {
+        if (!cancelled) setSingleDeviceKwh(kwh);
+      })
+      .catch((e) => {
+        if (!cancelled) setSingleError(e?.message || 'Failed to load device energy');
+      })
+      .finally(() => {
+        if (!cancelled) setIsSingleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, timeRange]);
+
+  const isSingleDevice = Boolean(deviceId);
+
+  const totalEnergyKwh: number = useMemo(() => {
+    if (!isSingleDevice) return analytics?.totalKwh ?? 0;
+    return singleDeviceKwh ?? 0;
+  }, [isSingleDevice, analytics?.totalKwh, singleDeviceKwh]);
+
+  const animatedValue = useAnimatedCounter(totalEnergyKwh.toFixed(2), 800);
+
+  const isLoading = isSingleDevice ? isSingleLoading : isAnalyticsLoading;
+  const error = isSingleDevice ? (singleError ? new Error(singleError) : null) : analyticsError;
 
   return (
     <div className={`bg-card rounded-lg border p-4 shadow-sm hover:shadow-md transition-shadow duration-200 ${className}`}>
@@ -122,7 +161,7 @@ const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = 
           <Zap className="h-4 w-4 text-primary" />
         </div>
       </div>
-      
+
       <div className="flex flex-col items-start">
         {isLoading ? (
           <Skeleton className="h-12 w-32" />
@@ -135,7 +174,7 @@ const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = 
               <span className="text-base text-muted-foreground ml-1">kWh</span>
             </div>
             <div className="text-sm text-muted-foreground mt-1">
-              {config.label}
+              {RANGE_LABEL[timeRange]}
             </div>
           </>
         )}

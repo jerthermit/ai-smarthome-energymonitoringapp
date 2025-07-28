@@ -1,3 +1,4 @@
+// frontend/src/components/dashboard/charts/EnergyUsageChart.tsx
 import React, { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
@@ -14,7 +15,8 @@ import {
 import type { ChartData, ChartOptions, ScriptableContext } from 'chart.js';
 import { chartConfig } from './chart-config';
 import { useTelemetryData } from '../../../hooks/useTelemetryData';
-import type { TelemetryData, TimeRange } from '../../../hooks/useTelemetryData';
+import type { TelemetryData } from '../../../hooks/useTelemetryData';
+import type { TimeRange } from '../../../types/dashboard';
 
 // Register ChartJS components
 ChartJS.register(
@@ -30,149 +32,179 @@ ChartJS.register(
 
 interface EnergyUsageChartProps {
   deviceId?: string;
-  timeRange: TimeRange;
+  timeRange: TimeRange; // 'day' | '3days' | 'week'
   height?: number | string;
   className?: string;
 }
 
-// Function to group data by time period and calculate average energy usage
-const processChartData = (
-  data: TelemetryData[], 
+/** ----- Time helpers (LOCAL timezone) ----- */
+const startOfHourLocal = (d: Date) => {
+  const x = new Date(d);
+  x.setMinutes(0, 0, 0);
+  return x;
+};
+
+const startOfDayLocal = (d: Date) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+
+const addHoursLocal = (d: Date, hours: number) => {
+  const x = new Date(d);
+  x.setHours(x.getHours() + hours);
+  return x;
+};
+
+const addDaysLocal = (d: Date, days: number) => {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+};
+
+const fmtHourLabel = (d: Date) =>
+  d.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
+
+const fmtDayShort = (d: Date) =>
+  d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+const fmtWeekdayShort = (d: Date) =>
+  d.toLocaleDateString(undefined, { weekday: 'short' });
+
+/**
+ * Build local-time buckets and compute average power (kW) per bucket.
+ * - day: 24 hourly buckets (last 24h)
+ * - 3days: 3 daily buckets (today and previous 2 days)
+ * - week: 7 daily buckets (today and previous 6 days)
+ */
+function processChartData(
+  data: TelemetryData[],
   timeRange: TimeRange
-): ChartData<'line', number[], string> => {
-  console.group('=== processChartData ===');
-  console.log('Input data:', data);
-  const dateBuckets: { [key: string]: { sum: number; count: number } } = {};
-  const today = new Date();
-  let daysToShow: number;
-  let dateFormat: Intl.DateTimeFormatOptions;
+): ChartData<'line', number[], string> {
+  const now = new Date(); // local
+  let bucketStarts: Date[] = [];
+  let labels: string[] = [];
 
-  // Set up time range parameters
-  switch (timeRange) {
-    case 'day':
-      daysToShow = 1;
-      dateFormat = { hour: '2-digit', hour12: true };
-      break;
-    case 'week':
-      daysToShow = 7;
-      dateFormat = { weekday: 'short' };
-      break;
-    case 'month':
-    default:
-      daysToShow = 30;
-      dateFormat = { day: 'numeric', month: 'short' };
-  }
-
-  // Initialize time periods
-  for (let i = daysToShow - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    dateBuckets[dateStr] = { sum: 0, count: 0 };
-  }
-  
-  // Process each data point
-  data.forEach(item => {
-    const date = new Date(item.timestamp);
-    const dateStr = date.toISOString().split('T')[0];
-    if (dateBuckets[dateStr]) {
-      dateBuckets[dateStr].sum += item.energyWatts / 1000; // Convert to kWh
-      dateBuckets[dateStr].count++;
+  if (timeRange === 'day') {
+    const endHour = startOfHourLocal(now);
+    const startHour = addHoursLocal(endHour, -23); // inclusive → 24 buckets
+    for (let i = 0; i < 24; i++) {
+      const h = addHoursLocal(startHour, i);
+      bucketStarts.push(h);
+      labels.push(fmtHourLabel(h));
     }
-  });
-  
-  // Calculate averages and format for chart
-  const labels = Object.keys(dateBuckets).map(dateStr => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', dateFormat);
-  });
-  
-  const chartData = Object.values(dateBuckets).map(period => (
-    period.count > 0 ? parseFloat((period.sum / period.count).toFixed(2)) : 0
-  ));
-  
-  const result = {
-    labels,
-    datasets: [
-      {
-        label: 'Average Energy Usage (kWh)',
-        data: chartData,
-        borderColor: chartConfig.colors.secondary,
-        backgroundColor: (context: ScriptableContext<'line'>) => {
-          const { chart } = context;
-          const { ctx, chartArea } = chart;
-          if (!chartArea) return 'hsla(267, 100%, 58%, 0.1)';
-          
-          const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-          gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.1)');
-          gradient.addColorStop(1, 'hsla(267, 100%, 58%, 0.4)');
-          return gradient;
-        },
-        borderWidth: 2,
-        pointBackgroundColor: chartConfig.colors.background,
-        pointBorderColor: chartConfig.colors.secondary,
-        pointHoverBackgroundColor: chartConfig.colors.secondary,
-        pointHoverBorderColor: chartConfig.colors.background,
-        pointRadius: 0,
-        pointHoverRadius: 6,
-        pointHitRadius: 10,
-        pointBorderWidth: 2,
-        tension: 0.3,
-        fill: true,
-      },
-    ],
+  } else if (timeRange === '3days') {
+    const endDay = startOfDayLocal(now);
+    const startDay = addDaysLocal(endDay, -2); // today + prev 2 days
+    for (let i = 0; i < 3; i++) {
+      const d = addDaysLocal(startDay, i);
+      bucketStarts.push(d);
+      labels.push(`${fmtWeekdayShort(d)} ${d.getDate()}`);
+    }
+  } else {
+    // week
+    const endDay = startOfDayLocal(now);
+    const startDay = addDaysLocal(endDay, -6); // today + prev 6 days
+    for (let i = 0; i < 7; i++) {
+      const d = addDaysLocal(startDay, i);
+      bucketStarts.push(d);
+      labels.push(`${fmtWeekdayShort(d)} ${d.getDate()}`);
+    }
+  }
+
+  // Prepare sum/count arrays
+  const sums: number[] = Array(bucketStarts.length).fill(0);
+  const counts: number[] = Array(bucketStarts.length).fill(0);
+
+  // Given a timestamp (UTC string), find its local bucket index
+  const getBucketIndex = (ts: string): number => {
+    const t = new Date(ts); // parsed as UTC; JS handles local offsets in get*
+    if (timeRange === 'day') {
+      // Hourly buckets: index based on hour offset from start
+      const start = bucketStarts[0];
+      const diffMs = t.getTime() - start.getTime();
+      return Math.floor(diffMs / (60 * 60 * 1000));
+    } else {
+      // Daily buckets: index based on day offset from start
+      const start = bucketStarts[0];
+      const tDay = startOfDayLocal(t);
+      const diffMs = tDay.getTime() - start.getTime();
+      return Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    }
   };
 
-  console.log('Processed chart data:', result);
-  console.groupEnd();
-  return result;
-};
+  // Aggregate instantaneous power readings into average power per bucket (kW)
+  for (const item of data) {
+    const idx = getBucketIndex(item.timestamp);
+    if (idx < 0 || idx >= bucketStarts.length) continue;
+    // Convert W → kW before averaging
+    sums[idx] += item.energyWatts / 1000;
+    counts[idx] += 1;
+  }
+
+  const series = sums.map((sum, i) => {
+    const c = counts[i];
+    return c > 0 ? parseFloat((sum / c).toFixed(3)) : 0;
+  });
+
+  const dataset = {
+    label: 'Average Power (kW)',
+    data: series,
+    borderColor: chartConfig.colors.secondary,
+    backgroundColor: (context: ScriptableContext<'line'>) => {
+      const { chart } = context;
+      const { ctx, chartArea } = chart;
+      if (!chartArea) return 'hsla(267, 100%, 58%, 0.1)';
+      const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+      gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.10)');
+      gradient.addColorStop(1, 'hsla(267, 100%, 58%, 0.40)');
+      return gradient;
+    },
+    borderWidth: 2,
+    pointBackgroundColor: chartConfig.colors.background,
+    pointBorderColor: chartConfig.colors.secondary,
+    pointHoverBackgroundColor: chartConfig.colors.secondary,
+    pointHoverBorderColor: chartConfig.colors.background,
+    pointRadius: 0,
+    pointHoverRadius: 6,
+    pointHitRadius: 10,
+    pointBorderWidth: 2,
+    tension: 0.3,
+    fill: true,
+  };
+
+  return { labels, datasets: [dataset] };
+}
 
 const chartOptions: ChartOptions<'line'> = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: {
-      position: 'top' as const,
-    },
+    legend: { position: 'top' },
     tooltip: {
       mode: 'index',
       intersect: false,
+      callbacks: {
+        label: (ctx) => {
+          const v = ctx.parsed.y;
+          return ` ${v?.toFixed?.(3) ?? v} kW`;
+        },
+      },
     },
   },
   scales: {
-    x: {
-      grid: {
-        display: false,
-      },
-    },
+    x: { grid: { display: false } },
     y: {
       beginAtZero: true,
-      title: {
-        display: true,
-        text: 'Energy Usage (W)',
-      },
+      title: { display: true, text: 'Power (kW)' },
     },
   },
   elements: {
-    line: {
-      tension: 0.4,
-      borderWidth: 2,
-    },
-    point: {
-      radius: 0,
-      hitRadius: 10,
-      hoverRadius: 5,
-    },
+    line: { tension: 0.4, borderWidth: 2 },
+    point: { radius: 0, hitRadius: 10, hoverRadius: 5 },
   },
-  interaction: {
-    mode: 'nearest',
-    axis: 'x',
-    intersect: false,
-  },
-  animation: {
-    duration: 1000
-  }
+  interaction: { mode: 'nearest', axis: 'x', intersect: false },
+  animation: { duration: 300 },
 };
 
 // Connection status indicator component
@@ -184,24 +216,16 @@ const ConnectionStatus: React.FC<{ isConnected: boolean; lastUpdated: Date }> = 
 
   useEffect(() => {
     if (!lastUpdated) return;
-    
+
     const updateTimeAgo = () => {
-      const seconds = Math.floor((new Date().getTime() - lastUpdated.getTime()) / 1000);
-      
-      if (seconds < 60) {
-        setTimeAgo('just now');
-      } else if (seconds < 3600) {
-        const minutes = Math.floor(seconds / 60);
-        setTimeAgo(`${minutes}m ago`);
-      } else {
-        const hours = Math.floor(seconds / 3600);
-        setTimeAgo(`${hours}h ago`);
-      }
+      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      if (seconds < 60) setTimeAgo('just now');
+      else if (seconds < 3600) setTimeAgo(`${Math.floor(seconds / 60)}m ago`);
+      else setTimeAgo(`${Math.floor(seconds / 3600)}h ago`);
     };
-    
+
     updateTimeAgo();
     const interval = setInterval(updateTimeAgo, 30000);
-    
     return () => clearInterval(interval);
   }, [lastUpdated]);
 
@@ -209,10 +233,10 @@ const ConnectionStatus: React.FC<{ isConnected: boolean; lastUpdated: Date }> = 
     <div className="absolute right-2 top-2 flex items-center space-x-2 bg-background/80 backdrop-blur-sm px-2 py-1 rounded-md text-xs">
       <div className="flex items-center">
         <span className="mr-1 text-muted-foreground">Status:</span>
-        <span 
+        <span
           className={`inline-block w-2 h-2 rounded-full mr-1 ${
             isConnected ? 'bg-green-500' : 'bg-yellow-500'
-          }`} 
+          }`}
         />
         <span className="font-medium">
           {isConnected ? 'Live' : 'Polling'}
@@ -233,14 +257,14 @@ const EnergyUsageChart: React.FC<EnergyUsageChartProps> = ({
   height = 400,
   className = ''
 }) => {
-  const { 
-    data: telemetryData = [], 
-    isLoading, 
+  const {
+    data: telemetryData = [],
+    isLoading,
     error,
     isUsingWebSocket = false,
     lastUpdated = new Date()
   } = useTelemetryData(timeRange, { deviceId, realtime: true });
-  
+
   const chartData = processChartData(telemetryData, timeRange);
 
   if (isLoading) {
@@ -260,7 +284,7 @@ const EnergyUsageChart: React.FC<EnergyUsageChartProps> = ({
         <div className="text-center text-destructive">
           <p className="font-medium">Error loading energy data</p>
           <p className="text-sm text-muted-foreground">{error.message}</p>
-          <button 
+          <button
             onClick={() => window.location.reload()}
             className="mt-2 text-sm text-primary hover:underline"
           >
