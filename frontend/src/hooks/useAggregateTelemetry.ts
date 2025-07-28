@@ -1,20 +1,21 @@
+// frontend/src/hooks/useAggregateTelemetry.ts
 import { useQuery } from '@tanstack/react-query';
 import type { TimeRange } from '../services/deviceService';
-import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+import api from '../services/api';
 
 export interface AggregateDataPoint {
-  timestamp: string;
-  value: number;
-  device_count: number;
+  timestamp: string;     // ISO8601 UTC from backend; convert to local in the UI
+  value: number;         // total energy (Wh) per bucket from backend aggregate
+  device_count: number;  // number of active devices in the bucket
 }
 
 export interface UseAggregateTelemetryOptions {
-  timeRange?: TimeRange;
-  resolutionMinutes?: number;
-  deviceIds?: string[];
+  timeRange?: TimeRange;       // 'hour' | 'day' | 'week' | 'month' (per backend)
+  resolutionMinutes?: number;  // 1–1440
+  deviceIds?: string[];        // optional device filter
   enabled?: boolean;
+  refetchMs?: number;          // override refetch interval (ms)
+  staleMs?: number;            // override stale time (ms)
 }
 
 export function useAggregateTelemetry({
@@ -22,26 +23,28 @@ export function useAggregateTelemetry({
   resolutionMinutes = 15,
   deviceIds,
   enabled = true,
+  refetchMs = 30_000,
+  staleMs = 10_000,
 }: UseAggregateTelemetryOptions = {}) {
-  return useQuery({
-    queryKey: ['aggregateTelemetry', timeRange, resolutionMinutes, deviceIds],
+  const deviceKey = deviceIds?.length ? [...deviceIds].sort().join(',') : 'all';
+
+  return useQuery<AggregateDataPoint[]>({
+    queryKey: ['aggregateTelemetry', timeRange, resolutionMinutes, deviceKey],
     queryFn: async () => {
-      const response = await axios.get(`${API_BASE_URL}/telemetry/aggregate`, {
-        params: {
-          time_range: timeRange,
-          resolution_minutes: resolutionMinutes,
-          device_ids: deviceIds?.join(','),
-        },
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Accept': 'application/json',
-        },
-      });
-      return response.data;
+      const params = {
+        time_range: timeRange,
+        resolution_minutes: resolutionMinutes,
+        // Send as comma-separated to avoid array serializer quirks; backend accepts both.
+        device_ids: deviceIds?.length ? deviceIds.join(',') : undefined,
+      };
+
+      const { data } = await api.get<AggregateDataPoint[]>('/telemetry/aggregate', { params });
+      // Data is already UTC. Consumers should convert to local time when rendering.
+      return data;
     },
-    refetchInterval: 30000, // 30 seconds
-    staleTime: 10000, // 10 seconds
-    enabled: enabled,
+    refetchInterval: enabled ? refetchMs : false,
+    staleTime: staleMs,
+    enabled,
   });
 }
 
