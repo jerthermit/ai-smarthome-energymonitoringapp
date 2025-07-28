@@ -1,172 +1,440 @@
+# backend/app/ai/energy_service.py
 """
 Energy Query Processing Service.
-Handles parsing natural language energy queries and generating structured responses.
+- Deterministic handling when parsed slots are provided (no LLM).
+- Fallback `process_query` retains simple parse with optional LLM assist as last resort.
+- Produces structured EnergyQueryResponse used by the chat API.
 """
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
 
-from .chat_schemas import EnergyQueryResponse, TimeRange, DeviceUsage, TimeSeriesPoint
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+from .chat_schemas import EnergyQueryResponse, TimeSeriesPoint
 from .providers.base import AIProvider
-from .data.energy_repository import EnergyRepository, TimeRange
+from .data.energy_repository import EnergyRepository, TimeRange as RepoTimeRange, TimeGroup
 
 logger = logging.getLogger(__name__)
 
+
+def _ordinal_suffix(n: int) -> str:
+    return "th" if 11 <= (n % 100) <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
 class EnergyQueryProcessor:
     """Processes natural language energy queries and generates structured responses."""
-    
+
     def __init__(self, ai_provider: AIProvider, energy_repo: EnergyRepository):
-        """Initialize with an AI provider and an energy data repository."""
         self.ai_provider = ai_provider
         self.energy_repo = energy_repo
-        self.system_prompt = """
-        You are an AI assistant for a smart home energy monitoring system. Your role is to help users understand their energy usage.
-        
-        When users ask about energy consumption:
-        1. Identify the device(s) they're asking about
-        2. Determine the time period they're interested in
-        3. Understand what specific metric they want (usage, cost, comparison, etc.)
-        4. Structure the response in the required JSON format
-        
-        Always respond with a valid JSON object containing these fields:
-        - summary: A natural language summary of the energy usage
-        - data: Structured information about the energy usage
-        - time_series: Optional time-series data if relevant
-        - metadata: Additional context about the query
+
+    # -------------------------------------------------------------------------
+    # MAIN: Deterministic path when orchestrator already parsed slots
+    # -------------------------------------------------------------------------
+    async def process_with_params(self, user_id: int, user_query: str, parsed: Dict[str, Any]) -> EnergyQueryResponse:
         """
-    
+        Deterministic handling using parsed slots from the orchestrator.
+        parsed format:
+        {
+          "time": { "label": str, "start_utc": iso8601|None, "end_utc": iso8601|None, "granularity": "minute|hour|day" },
+          "devices": [str],
+          "rank": "highest"|"lowest"|None
+        }
+        """
+        time_info = (parsed or {}).get("time") or {}
+        label = (time_info.get("label") or "").strip().lower()
+        start_utc = _parse_iso_dt(time_info.get("start_utc"))
+        end_utc = _parse_iso_dt(time_info.get("end_utc"))
+        gran = (time_info.get("granularity") or "day").lower()
+
+        # Device handling
+        devices: List[str] = list((parsed or {}).get("devices") or [])
+        device_keyword = _normalize_device_keyword(devices)
+        rank: Optional[str] = (parsed or {}).get("rank")
+
+        # If no time provided, default last 7 days
+        if not start_utc or not end_utc:
+            now = datetime.now(timezone.utc)
+            start_utc = start_utc or (now - timedelta(days=7))
+            end_utc = end_utc or now
+            if not label:
+                label = "last_7_days"
+        time_group = _map_granularity_to_timegroup(gran)
+
+        # If rank requested (highest/lowest), compute across devices for the window
+        if rank in {"highest", "lowest"}:
+            # If label is one of the repo's fast paths, you could use get_highest/lowest_consuming_device.
+            # But to support arbitrary start/end, compute deterministically from usage data:
+            top = await self._compute_rank_from_usage(
+                user_id=user_id,
+                start=start_utc,
+                end=end_utc,
+                time_group=time_group,
+                direction="desc" if rank == "highest" else "asc",
+            )
+            if not top:
+                return self._no_data_response(label, parsed)
+
+            dev = top["device"]
+            kwh = dev["total_energy_wh"] / 1000.0
+            suffix = _ordinal_suffix(1)
+            summary = (
+                f"Your 1{suffix} {rank} device for {label.replace('_', ' ')} is "
+                f"{dev['name']}, using {kwh:.2f} kWh."
+            )
+            return EnergyQueryResponse(
+                summary=summary,
+                data=top,
+                time_series=None,
+                metadata={
+                    "query_processed": {
+                        "time": {
+                            "label": label,
+                            "start_utc": start_utc.isoformat(),
+                            "end_utc": end_utc.isoformat(),
+                            "granularity": gran,
+                        },
+                        "devices": devices,
+                        "rank": rank,
+                    }
+                },
+            )
+
+        # Usage path (optionally filtered by device)
+        usage = await self.energy_repo.get_energy_usage(
+            user_id=user_id,
+            device_name=device_keyword,  # "all" or specific
+            start_time=start_utc,
+            end_time=end_utc,
+            time_group=time_group,
+        )
+
+        points: List[TimeSeriesPoint] = [
+            TimeSeriesPoint(
+                timestamp=_coerce_iso_to_dt(row.get("time_period")),
+                value=float(row.get("total_energy_wh", 0.0)) / 1000.0,
+                unit="kWh",
+            )
+            for row in usage.get("data", [])
+            if row.get("time_period")
+        ]
+
+        summary_obj = usage.get("summary") or {}
+        total_kwh = float(summary_obj.get("total_energy_wh", 0.0)) / 1000.0
+        device_count = int(summary_obj.get("device_count", 0))
+        tp = summary_obj.get("time_period") or {}
+        start_s = (tp.get("start") or start_utc.isoformat())[:10]
+        end_s = (tp.get("end") or end_utc.isoformat())[:10]
+
+        device_phrase = (
+            f"devices matching '{device_keyword}'" if device_keyword and device_keyword != "all" else "all devices"
+        )
+        summary_text = (
+            f"You used {total_kwh:.2f} kWh from {start_s} to {end_s} across "
+            f"{device_count} device{'s' if device_count != 1 else ''} ({device_phrase})."
+        )
+
+        return EnergyQueryResponse(
+            summary=summary_text,
+            data=summary_obj,
+            time_series=points or None,
+            metadata={
+                "query_processed": {
+                    "time": {
+                        "label": label,
+                        "start_utc": start_utc.isoformat(),
+                        "end_utc": end_utc.isoformat(),
+                        "granularity": gran,
+                    },
+                    "devices": devices,
+                    "rank": None,
+                }
+            },
+        )
+
+    # -------------------------------------------------------------------------
+    # Fallback path (existing behavior kept, but preferring simple parse first)
+    # -------------------------------------------------------------------------
     async def process_query(self, user_id: int, user_query: str) -> EnergyQueryResponse:
         """
-        Process a natural language energy query and return a structured response.
-        
-        Args:
-            user_query: The user's natural language query about energy usage
-            
-        Returns:
-            An EnergyQueryResponse object containing the structured response
+        Handle a user query with best-effort parsing:
+        - Prefer simple deterministic parse.
+        - If that fails catastrophically, try LLM JSON once; then fallback to simple.
         """
         try:
-            # First, use AI to understand the query
-            parsed_query = await self._parse_query(user_query)
-            
-            # Then generate a structured response using the user_id
-            response = await self._generate_response(user_id, parsed_query)
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error processing energy query: {str(e)}", exc_info=True)
-            return self._create_error_response(str(e))
-    
-    async def _parse_query(self, query: str) -> Dict[str, Any]:
-        """Use AI to parse the natural language query into structured data."""
-        prompt = f"""
-        Parse this energy query into a JSON object with these fields:
-        - time_range_type: One of ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "custom"]
-        - devices: List of device names or ["all"]
-        - metric: The type of metric being queried (e.g., "consumption", "cost", "comparison")
-        
-        Query: {query}
-        
-        Respond with a JSON object only, no other text.
-        """
-        
-        try:
-            response_json = await self.ai_provider.get_structured_response(
-                prompt=prompt,
-                response_format={
-                    "type": "json_object",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "time_range_type": {"type": "string", "enum": ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "custom"]},
-                            "devices": {"type": "array", "items": {"type": "string"}, "default": ["all"]},
-                            "metric": {"type": "string", "default": "consumption"}
-                        },
-                        "required": ["time_range_type"]
-                    }
-                }
+            parsed = self._simple_parse(user_query)
+            return await self.process_with_params(
+                user_id=user_id,
+                user_query=user_query,
+                parsed={
+                    "time": {
+                        "label": parsed["time_range_type"],
+                        "start_utc": parsed.get("start_utc"),
+                        "end_utc": parsed.get("end_utc"),
+                        "granularity": parsed.get("granularity") or "day",
+                    },
+                    "devices": [parsed.get("device_keyword")] if parsed.get("device_keyword") else [],
+                    "rank": parsed.get("intent") if parsed.get("intent") in {"highest_consuming", "lowest_consuming"} else None,
+                },
             )
-            
-            # Ensure we have a dictionary and not a list
-            if isinstance(response_json, list) and len(response_json) > 0:
-                response_json = response_json[0] if isinstance(response_json[0], dict) else {"time_range_type": "today", "devices": ["all"], "metric": "consumption"}
-            elif not isinstance(response_json, dict):
-                response_json = {"time_range_type": "today", "devices": ["all"], "metric": "consumption"}
-                
-            return response_json
-            
-        except Exception as e:
-            logger.warning(f"Failed to parse query with AI, using default values. Error: {str(e)}")
-            return {"time_range_type": "today", "devices": ["all"], "metric": "consumption"}
-    
-    async def _generate_response(self, user_id: int, parsed_query: Dict[str, Any]) -> EnergyQueryResponse:
-        """Generate a structured response based on the parsed query."""
-        time_range_type = parsed_query.get("time_range_type", "today")
-        devices = parsed_query.get("devices", ["all"])
-        
-        # 1. Get the data from the repository
-        time_range = TimeRange.from_string(time_range_type)
-        device_name_filter = devices[0] if devices[0] != 'all' else None
+        except Exception as e1:
+            logger.warning(f"simple parse failed, trying LLM: {e1}")
+            try:
+                parsed_llm = await self._parse_with_llm(user_query)
+                # Convert to params for deterministic execution
+                tr = parsed_llm.get("time_range_type") or "today"
+                start_utc, end_utc = _range_from_label(tr)
+                return await self.process_with_params(
+                    user_id=user_id,
+                    user_query=user_query,
+                    parsed={
+                        "time": {
+                            "label": tr,
+                            "start_utc": start_utc.isoformat() if start_utc else None,
+                            "end_utc": end_utc.isoformat() if end_utc else None,
+                            "granularity": "day",
+                        },
+                        "devices": [parsed_llm.get("device_keyword")] if parsed_llm.get("device_keyword") else [],
+                        "rank": "highest" if parsed_llm.get("intent") == "highest_consuming"
+                                else ("lowest" if parsed_llm.get("intent") == "lowest_consuming" else None),
+                    },
+                )
+            except Exception as e2:
+                logger.error(f"LLM parse also failed: {e2}")
+                return self._create_error_response("I couldn't interpret the question, please try again.")
 
-        # Fetch aggregated data and time-series data
-        usage_data = await self.energy_repo.get_energy_usage(
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    async def _compute_rank_from_usage(
+        self,
+        user_id: int,
+        start: datetime,
+        end: datetime,
+        time_group: TimeGroup,
+        direction: str = "desc",  # "desc" for highest, "asc" for lowest
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Compute the top/bottom device by summing `total_energy_wh` per device over the window.
+        Uses existing get_energy_usage to avoid new repository code.
+        """
+        usage = await self.energy_repo.get_energy_usage(
             user_id=user_id,
-            device_name=device_name_filter,
-            start_time=time_range.start,
-            end_time=time_range.end,
-            time_group='day' # Example granularity
+            device_name="all",
+            start_time=start,
+            end_time=end,
+            time_group=time_group,
         )
+        rows = usage.get("data") or []
+        # Aggregate per device
+        agg: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            did = r.get("device_id")
+            if not did:
+                continue
+            a = agg.setdefault(did, {
+                "device_id": did,
+                "device_name": r.get("device_name"),
+                "total_energy_wh": 0.0,
+                "avg_power_w_acc": 0.0,
+                "points": 0,
+            })
+            a["total_energy_wh"] += float(r.get("total_energy_wh", 0.0))
+            # For avg power, approximate by averaging the per-row avg weighted by points
+            dp = int(r.get("data_points", 0))
+            a["avg_power_w_acc"] += float(r.get("avg_power_w", 0.0)) * dp
+            a["points"] += dp
 
-        # For the final response, we can re-format this into our Pydantic models
-        # This part requires translating the generic repository response to the specific chat schema
-        # For now, we will create a summary and pass some data through.
-        time_series_points = [
-            TimeSeriesPoint(
-                timestamp=point['time_period'],
-                value=point['total_energy_wh'],
-                unit='Wh'
-            ) for point in usage_data.get('data', [])
-        ]
+        if not agg:
+            return None
 
-        # 2. Generate a dynamic summary with the AI
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant that summarizes energy usage data in a clear and concise way."},
-            {"role": "user", "content": f"""
-            Please summarize this energy usage data in 1-2 friendly sentences:
-            {usage_data.get('summary')}
-            """}
-        ]
-        
-        response = await self.ai_provider.chat_completion(
-            messages=messages,
-            max_tokens=100,
-            temperature=0.3  # Keep it factual
+        # finalize avg power
+        for a in agg.values():
+            pts = max(1, int(a.pop("points", 0)))
+            a["avg_power_w"] = a.pop("avg_power_w_acc", 0.0) / pts
+
+        # pick device
+        sorted_devs = sorted(
+            agg.values(),
+            key=lambda x: x["total_energy_wh"],
+            reverse=(direction == "desc"),
         )
-        summary = response.get('choices', [{}])[0].get('message', {}).get('content', 'Energy data is currently unavailable.')
+        best = sorted_devs[0]
+        total_energy = sum(d["total_energy_wh"] for d in sorted_devs) or 0.0
+        pct = (best["total_energy_wh"] / total_energy * 100.0) if total_energy > 0 else 0.0
 
-        # 3. Format the response
-        return EnergyQueryResponse(
-            summary=summary,
-            data=usage_data.get('summary', {}),
-            time_series=time_series_points,
-            metadata={
-                "query_processed": parsed_query,
-                "generated_at": datetime.utcnow().isoformat(),
-                "raw_repo_response": usage_data # for debugging
-            }
-        )
-    
-    def _create_error_response(self, error_message: str) -> EnergyQueryResponse:
-        """Create an error response with the given message."""
-        return EnergyQueryResponse(
-            summary=f"I'm sorry, I encountered an error processing your request: {error_message}",
-            data={
-                "error": error_message,
-                "status": "error"
+        return {
+            "device": {
+                "id": best["device_id"],
+                "name": best["device_name"],
+                "total_energy_wh": float(best["total_energy_wh"]),
+                "avg_power_w": float(best["avg_power_w"]),
+                "percentage_of_total": pct,
             },
-            metadata={
-                "error": True,
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            "time_period": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "readable": "custom",
+            },
+            "comparison": [
+                {
+                    "device_name": d["device_name"],
+                    "total_energy_wh": float(d["total_energy_wh"]),
+                    "percentage": (d["total_energy_wh"] / total_energy * 100.0) if total_energy > 0 else 0.0,
+                }
+                for d in sorted_devs[:3]
+            ],
+        }
+
+    async def _parse_with_llm(self, query: str) -> Dict[str, Any]:
+        """
+        Use LLM to parse the user query into:
+        { intent: usage|highest_consuming|lowest_consuming,
+          time_range_type: today|yesterday|last_week|last_month,
+          device_keyword: string }
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "intent": {"type": "string", "enum": ["usage", "highest_consuming", "lowest_consuming"]},
+                "time_range_type": {"type": "string", "enum": ["today", "yesterday", "last_week", "last_month"]},
+                "device_keyword": {"type": "string"},
+            },
+            "required": ["intent", "time_range_type"],
+        }
+        prompt = (
+            f"Parse this into JSON matching schema: {schema}\n"
+            f"Query: {query}\n"
+            "Reply only with the JSON object."
         )
+        parsed = await self.ai_provider.get_structured_response(
+            prompt=prompt,
+            response_format={"type": "json_object", "schema": schema},
+            temperature=0.0,
+            max_tokens=400,
+        )
+        if not isinstance(parsed, dict):
+            raise ValueError("Invalid LLM JSON")
+        return parsed
+
+    def _simple_parse(self, q: str) -> Dict[str, Any]:
+        ql = q.lower()
+        # intent
+        if any(kw in ql for kw in ["highest", "top", "most"]):
+            intent = "highest_consuming"
+        elif any(kw in ql for kw in ["lowest", "least"]):
+            intent = "lowest_consuming"
+        else:
+            intent = "usage"
+        # time range
+        if "today" in ql:
+            tr = "today"
+        elif "yesterday" in ql:
+            tr = "yesterday"
+        elif "week" in ql or "7 days" in ql:
+            tr = "last_week"
+        elif "month" in ql or "30 days" in ql:
+            tr = "last_month"
+        else:
+            tr = "last_week"
+        # device
+        dk = None
+        for d in ["ac", "aircon", "fridge", "light", "pc", "heater", "water heater", "tv", "fan"]:
+            if d in ql:
+                dk = "ac" if d in {"ac", "aircon"} else d
+                break
+
+        # concrete timestamps for deterministic execution
+        start_utc, end_utc = _range_from_label(tr)
+        return {
+            "intent": intent,
+            "time_range_type": tr,
+            "device_keyword": dk or "all",
+            "start_utc": start_utc.isoformat() if start_utc else None,
+            "end_utc": end_utc.isoformat() if end_utc else None,
+            "granularity": "day" if tr in {"last_week", "last_month"} else "hour",
+        }
+
+    def _create_error_response(self, msg: str) -> EnergyQueryResponse:
+        return EnergyQueryResponse(
+            summary=f"Error: {msg}",
+            data={"error": msg},
+            time_series=None,
+            metadata={"error": True, "timestamp": datetime.now(timezone.utc).isoformat()},
+        )
+
+
+# ----------------------- local utils -----------------------
+
+def _map_granularity_to_timegroup(gran: str) -> TimeGroup:
+    g = (gran or "day").lower()
+    if g.startswith("min"):
+        return TimeGroup.HOUR  # repository groups at hour/day/week/month; minute → hour is safer
+    if g.startswith("hour"):
+        return TimeGroup.HOUR
+    if g.startswith("day"):
+        return TimeGroup.DAY
+    if g.startswith("week"):
+        return TimeGroup.WEEK
+    if g.startswith("month"):
+        return TimeGroup.MONTH
+    return TimeGroup.DAY
+
+
+def _normalize_device_keyword(devs: List[str]) -> str:
+    if not devs:
+        return "all"
+    # If multiple provided, treat as "all" to avoid unexpected filtering
+    d = devs[0].strip().lower()
+    if d in {"all", ""}:
+        return "all"
+    if d in {"aircon", "air con", "air conditioner", "a/c"}:
+        return "ac"
+    return d
+
+
+def _parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        ss = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ss)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _coerce_iso_to_dt(s: Optional[str]) -> datetime:
+    if not s:
+        return datetime.now(timezone.utc)
+    try:
+        ss = str(s).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ss)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _range_from_label(label: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+    now = datetime.now(timezone.utc)
+    if label == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    if label == "yesterday":
+        y = now - timedelta(days=1)
+        start = y.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = y.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return start, end
+    if label == "last_week":
+        return now - timedelta(days=7), now
+    if label == "last_month":
+        return now - timedelta(days=30), now
+    # default
+    return now - timedelta(days=7), now

@@ -1,15 +1,22 @@
-"""
-Energy Data Repository.
-Handles database operations for energy-related queries.
-"""
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple, Union
+# backend/app/ai/data/energy_repository.py
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any, Optional
 from enum import Enum
+
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, case, text
+from sqlalchemy import text
 
 from app.telemetry.models import Device, Telemetry
-from app.auth.models import User
+
+# ---------------- Configuration ----------------
+# If Telemetry.energy_watts is instantaneous power (W), leave True.
+# If your samples are already energy per interval (Wh), set False and simplify.
+USE_PREVIOUS_POWER = True
+DEFAULT_MAX_GAP_SECONDS = 15 * 60  # 15 minutes cap for Δt
+
 
 class TimeGroup(str, Enum):
     HOUR = "hour"
@@ -17,69 +24,54 @@ class TimeGroup(str, Enum):
     WEEK = "week"
     MONTH = "month"
 
+
 class MetricType(str, Enum):
     ENERGY_USAGE = "energy_usage"
     POWER_CONSUMPTION = "power_consumption"
     COST = "cost"
     COMPARISON = "comparison"
 
+
 class TimeRange:
     """Helper class for handling time ranges in queries."""
-    
+
     def __init__(self, start: Optional[datetime] = None, end: Optional[datetime] = None):
-        self.start = start or (datetime.utcnow() - timedelta(days=7))
-        self.end = end or datetime.utcnow()
-    
+        now = datetime.now(timezone.utc)
+        self.start = start or (now - timedelta(days=7))
+        self.end = end or now
+
     def to_dict(self) -> Dict[str, datetime]:
         return {"start": self.start, "end": self.end}
-    
+
     @classmethod
-    def from_string(cls, time_range_str: str) -> 'TimeRange':
-        """Create TimeRange from string like 'today', 'yesterday', 'last_week', etc."""
-        now = datetime.utcnow()
+    def from_string(cls, time_range_str: str) -> "TimeRange":
+        now = datetime.now(timezone.utc)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        
         if time_range_str == "today":
             return cls(start=today, end=now)
         elif time_range_str == "yesterday":
-            yesterday = today - timedelta(days=1)
-            return cls(start=yesterday, end=today - timedelta(seconds=1))
+            yesterday_start = today - timedelta(days=1)
+            yesterday_end = today - timedelta(seconds=1)
+            return cls(start=yesterday_start, end=yesterday_end)
         elif time_range_str == "last_week":
             return cls(start=now - timedelta(days=7), end=now)
         elif time_range_str == "last_month":
             return cls(start=now - timedelta(days=30), end=now)
         else:
-            return cls()  # Default to last 7 days
+            return cls(start=now - timedelta(days=7), end=now)
+
 
 class EnergyRepository:
     """
-    Repository for energy data access operations.
-    
-    This class provides methods to query energy usage data with various filters
-    and aggregations, supporting both high-level summaries and detailed time-series data.
+    Repository for energy data access (SQL-RAG).
+    Computes energy by integrating W over time with window functions and Timescale time_bucket.
     """
-    
+
     def __init__(self, db: Session):
-        """
-        Initialize with database session.
-        
-        Args:
-            db: SQLAlchemy database session
-        """
         self.db = db
-        
-    def _get_time_group_expression(self, time_group: TimeGroup, column):
-        """Get SQL expression for time-based grouping."""
-        if time_group == TimeGroup.HOUR:
-            return func.date_trunc('hour', column)
-        elif time_group == TimeGroup.DAY:
-            return func.date(column)
-        elif time_group == TimeGroup.WEEK:
-            return func.date_trunc('week', column)
-        elif time_group == TimeGroup.MONTH:
-            return func.date_trunc('month', column)
-        return func.date(column)  # Default to daily
-    
+
+    # -------------------- Public API --------------------
+
     async def get_energy_usage(
         self,
         user_id: int,
@@ -87,171 +79,274 @@ class EnergyRepository:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         time_group: TimeGroup = TimeGroup.DAY,
-        metric: MetricType = MetricType.ENERGY_USAGE
+        max_gap_seconds: int = DEFAULT_MAX_GAP_SECONDS,
     ) -> Dict[str, Any]:
         """
-        Get energy usage data with flexible filtering and grouping.
-        
-        Args:
-            user_id: ID of the user
-            device_name: Optional device name filter (partial match, case-insensitive)
-            start_time: Start of time range (default: 7 days ago)
-            end_time: End of time range (default: now)
-            time_group: Time period to group results by
-            metric: Type of metric to return
-            
-        Returns:
-            Dictionary containing:
-            - summary: Aggregated statistics
-            - data: List of data points
-            - metadata: Query metadata
+        Return energy usage aggregated into time buckets, integrating W→Wh.
+        Output shape is backward-compatible with previous implementation:
+        - summary.total_energy_wh
+        - data[] with per-bucket rows: device_id, device_name, time_period (ISO), total_energy_wh, avg_power_w, data_points
         """
-        # Initialize time range
-        time_range = TimeRange(start_time, end_time)
-        
-        # Build base query
-        query = self.db.query(
-            Device.id.label('device_id'),
-            Device.name.label('device_name'),
-            self._get_time_group_expression(time_group, Telemetry.timestamp).label('time_period'),
-            func.sum(Telemetry.energy_watts).label('total_energy_wh'),
-            func.avg(Telemetry.energy_watts).label('avg_power_w'),
-            func.count(Telemetry.id).label('data_points')
-        ).join(
-            Telemetry,
-            Device.id == Telemetry.device_id
-        ).filter(
-            Device.user_id == user_id,
-            Telemetry.timestamp.between(time_range.start, time_range.end)
+        tr = TimeRange(start_time, end_time)
+        bucket = self._bucket_from_group(time_group)
+
+        # Build SQL for integration:
+        # 1) Filter rows to user + time window (+ optional device ILIKE)
+        # 2) Compute prev_ts, prev_w (LAG per device)
+        # 3) Δt = epoch(timestamp - prev_ts), capped to max_gap_seconds
+        # 4) energy_wh = (prev_w or current_w) * Δt / 3600
+        # 5) Bucket with time_bucket(:bucket, timestamp) and sum energy_wh
+        # Note: Using prev_w to model the interval [prev_ts, ts).
+
+        sql = """
+        WITH filtered AS (
+            SELECT
+                t.device_id,
+                t.timestamp,
+                t.energy_watts AS power_w,
+                LAG(t.timestamp) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_ts,
+                LAG(t.energy_watts) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_w
+            FROM telemetry t
+            JOIN devices d ON d.id = t.device_id
+            WHERE d.user_id = :user_id
+              AND t.timestamp >= :start_time
+              AND t.timestamp <= :end_time
+              {device_filter}
+        ),
+        intervals AS (
+            SELECT
+                device_id,
+                timestamp,
+                COALESCE(prev_w, power_w) AS power_w_for_interval,
+                EXTRACT(EPOCH FROM (timestamp - prev_ts)) AS delta_s
+            FROM filtered
+        ),
+        intervals_capped AS (
+            SELECT
+                device_id,
+                timestamp,
+                power_w_for_interval,
+                GREATEST(0, LEAST(:max_gap_seconds, COALESCE(delta_s, 0))) AS delta_s
+            FROM intervals
+        ),
+        per_bucket AS (
+            SELECT
+                device_id,
+                time_bucket(:bucket, timestamp) AS bucket,
+                SUM(power_w_for_interval * delta_s / 3600.0) AS energy_wh,
+                AVG(power_w_for_interval) AS avg_power_w,
+                COUNT(*) AS points
+            FROM intervals_capped
+            GROUP BY device_id, bucket
         )
-        
-        # Apply device filter if provided
-        if device_name and device_name.lower() != 'all':
-            query = query.filter(Device.name.ilike(f'%{device_name}%'))
-        
-        # Group by device and time period
-        query = query.group_by(
-            Device.id,  # Use the actual column reference instead of string
-            Device.name,
-            'time_period'  # This is a SQL expression, so we keep it as string
-        ).order_by(
-            'time_period',
-            Device.name
-        )
-        
-        # Execute query
-        results = query.all()
-        
-        # Calculate summary statistics
-        total_energy = sum(r.total_energy_wh or 0 for r in results)
-        avg_power = sum((r.avg_power_w or 0) * (r.data_points or 0) for r in results) / \
-                   sum(r.data_points or 0 for r in results) if results else 0
-        
-        # Format response
-        return {
-            'summary': {
-                'total_energy_wh': total_energy,
-                'avg_power_w': avg_power,
-                'device_count': len({r.device_id for r in results}),
-                'time_period': {
-                    'start': time_range.start.isoformat(),
-                    'end': time_range.end.isoformat(),
-                    'group_by': time_group
-                }
-            },
-            'data': [{
-                'device_id': r.device_id,
-                'device_name': r.device_name,
-                'time_period': r.time_period.isoformat() if r.time_period else None,
-                'total_energy_wh': float(r.total_energy_wh) if r.total_energy_wh is not None else 0.0,
-                'avg_power_w': float(r.avg_power_w) if r.avg_power_w is not None else 0.0,
-                'data_points': r.data_points or 0
-            } for r in results],
-            'metadata': {
-                'query': {
-                    'device_name': device_name,
-                    'time_range': time_range.to_dict(),
-                    'time_group': time_group,
-                    'metric': metric
-                },
-                'generated_at': datetime.utcnow().isoformat()
-            }
+        SELECT
+            pb.bucket AS bucket,
+            pb.device_id AS device_id,
+            d.name AS device_name,
+            pb.energy_wh AS total_energy_wh,
+            pb.avg_power_w AS avg_power_w,
+            pb.points AS data_points
+        FROM per_bucket pb
+        JOIN devices d ON d.id = pb.device_id
+        ORDER BY pb.bucket, d.name
+        """
+
+        device_filter = ""
+        params: Dict[str, Any] = {
+            "user_id": user_id,
+            "start_time": tr.start,
+            "end_time": tr.end,
+            "bucket": bucket,
+            "max_gap_seconds": int(max_gap_seconds),
         }
-    
+
+        if device_name and device_name.lower() != "all":
+            device_filter = " AND d.name ILIKE :device_pattern "
+            params["device_pattern"] = f"%{device_name}%"
+
+        sql = sql.format(device_filter=device_filter)
+
+        rows = self.db.execute(text(sql), params).fetchall()
+
+        # Assemble response
+        data: List[Dict[str, Any]] = []
+        total_energy_wh = 0.0
+        device_ids = set()
+
+        for r in rows:
+            bucket_ts = r.bucket  # datetime from DB
+            device_ids.add(r.device_id)
+            e_wh = float(r.total_energy_wh or 0.0)
+            total_energy_wh += e_wh
+
+            data.append({
+                "device_id": r.device_id,
+                "device_name": r.device_name,
+                "time_period": (bucket_ts.isoformat() if hasattr(bucket_ts, "isoformat") else str(bucket_ts)),
+                "total_energy_wh": e_wh,
+                "avg_power_w": float(r.avg_power_w or 0.0),
+                "data_points": int(r.data_points or 0),
+            })
+
+        summary = {
+            "total_energy_wh": total_energy_wh,
+            "avg_power_w": self._avg_power_from_rows(rows),
+            "device_count": len(device_ids),
+            "time_period": {
+                "start": tr.start.isoformat(),
+                "end": tr.end.isoformat(),
+                "group_by": time_group.value,
+            },
+        }
+
+        return {
+            "summary": summary,
+            "data": data,
+            "metadata": {
+                "query": {
+                    "device_name": device_name,
+                    "time_range": tr.to_dict(),
+                    "time_group": time_group.value,
+                    "integrated": True,
+                    "max_gap_seconds": max_gap_seconds,
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
     async def get_highest_consuming_device(
         self,
         user_id: int,
-        time_range_str: str = "today"
+        time_range_str: str = "today",
+        max_gap_seconds: int = DEFAULT_MAX_GAP_SECONDS,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get the highest energy-consuming device for a user in the given time range.
-        
-        Args:
-            user_id: ID of the user
-            time_range_str: Time range as string (e.g., 'today', 'yesterday', 'last_week')
-            
-        Returns:
-            Dictionary with device and usage info, or None if no data
-        """
-        time_range = TimeRange.from_string(time_range_str)
-        
-        # Subquery to get total energy per device
-        device_energy = self.db.query(
-            Device.id.label('device_id'),
-            Device.name.label('device_name'),
-            func.sum(Telemetry.energy_watts).label('total_energy_wh'),
-            func.avg(Telemetry.energy_watts).label('avg_power_w'),
-            func.count(Telemetry.id).label('data_points')
-        ).join(
-            Telemetry,
-            Device.id == Telemetry.device_id
-        ).filter(
-            Device.user_id == user_id,
-            Telemetry.timestamp.between(time_range.start, time_range.end)
-        ).group_by(
-            Device.id,
-            Device.name
-        ).subquery()
-        
-        # Get the device with maximum energy usage
-        result = self.db.query(
-            device_energy
-        ).order_by(
-            device_energy.c.total_energy_wh.desc()
-        ).first()
-        
-        if not result:
-            return None
-            
-        # Get top 3 devices for comparison
-        top_devices = self.db.query(
-            device_energy
-        ).order_by(
-            device_energy.c.total_energy_wh.desc()
-        ).limit(3).all()
-        
-        # Calculate total energy across all devices
-        total_energy = sum(d.total_energy_wh or 0 for d in top_devices)
-        
+        """Return highest consuming device using integrated energy."""
+        return await self._rank_device(user_id, time_range_str, highest=True, max_gap_seconds=max_gap_seconds)
+
+    async def get_lowest_consuming_device(
+        self,
+        user_id: int,
+        time_range_str: str = "today",
+        max_gap_seconds: int = DEFAULT_MAX_GAP_SECONDS,
+    ) -> Optional[Dict[str, Any]]:
+        """Return lowest consuming device using integrated energy."""
+        return await self._rank_device(user_id, time_range_str, highest=False, max_gap_seconds=max_gap_seconds)
+
+    # -------------------- Internals --------------------
+
+    def _bucket_from_group(self, tg: TimeGroup) -> str:
         return {
-            'device': {
-                'id': result.device_id,
-                'name': result.device_name,
-                'total_energy_wh': float(result.total_energy_wh) if result.total_energy_wh else 0.0,
-                'avg_power_w': float(result.avg_power_w) if result.avg_power_w else 0.0,
-                'data_points': result.data_points or 0,
-                'percentage_of_total': (float(result.total_energy_wh) / total_energy * 100) 
-                                     if total_energy > 0 else 0.0
+            TimeGroup.HOUR: "1 hour",
+            TimeGroup.DAY: "1 day",
+            TimeGroup.WEEK: "1 week",
+            TimeGroup.MONTH: "1 month",
+        }.get(tg, "1 day")
+
+    def _avg_power_from_rows(self, rows) -> float:
+        # Weighted average is tricky without uniform cadence; return simple avg of bucket avgs
+        vals = [float(r.avg_power_w or 0.0) for r in rows if r.avg_power_w is not None]
+        return (sum(vals) / len(vals)) if vals else 0.0
+
+    async def _rank_device(
+        self,
+        user_id: int,
+        time_range_str: str,
+        highest: bool,
+        max_gap_seconds: int,
+    ) -> Optional[Dict[str, Any]]:
+        tr = TimeRange.from_string(time_range_str)
+
+        sql = """
+        WITH filtered AS (
+            SELECT
+                t.device_id,
+                t.timestamp,
+                t.energy_watts AS power_w,
+                LAG(t.timestamp) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_ts,
+                LAG(t.energy_watts) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_w
+            FROM telemetry t
+            JOIN devices d ON d.id = t.device_id
+            WHERE d.user_id = :user_id
+              AND t.timestamp >= :start_time
+              AND t.timestamp <= :end_time
+        ),
+        intervals AS (
+            SELECT
+                device_id,
+                COALESCE(prev_w, power_w) AS power_w_for_interval,
+                EXTRACT(EPOCH FROM (timestamp - prev_ts)) AS delta_s
+            FROM filtered
+        ),
+        intervals_capped AS (
+            SELECT
+                device_id,
+                GREATEST(0, LEAST(:max_gap_seconds, COALESCE(delta_s, 0))) AS delta_s,
+                power_w_for_interval
+            FROM intervals
+        ),
+        per_device AS (
+            SELECT
+                device_id,
+                SUM(power_w_for_interval * delta_s / 3600.0) AS energy_wh,
+                AVG(power_w_for_interval) AS avg_power_w,
+                COUNT(*) AS data_points
+            FROM intervals_capped
+            GROUP BY device_id
+        )
+        SELECT
+            pd.device_id,
+            d.name AS device_name,
+            pd.energy_wh AS total_energy_wh,
+            pd.avg_power_w AS avg_power_w,
+            pd.data_points AS data_points
+        FROM per_device pd
+        JOIN devices d ON d.id = pd.device_id
+        ORDER BY pd.energy_wh {order_dir}
+        LIMIT 3
+        """
+
+        order_dir = "DESC" if highest else "ASC"
+        sql = sql.format(order_dir=order_dir)
+
+        params = {
+            "user_id": user_id,
+            "start_time": tr.start,
+            "end_time": tr.end,
+            "max_gap_seconds": int(max_gap_seconds),
+        }
+
+        top = self.db.execute(text(sql), params).fetchall()
+        if not top:
+            return None
+
+        # First item is the target device
+        first = top[0]
+        total_top_wh = sum(float(r.total_energy_wh or 0.0) for r in top) or 0.0
+
+        device = {
+            "id": first.device_id,
+            "name": first.device_name,
+            "total_energy_wh": float(first.total_energy_wh or 0.0),
+            "avg_power_w": float(first.avg_power_w or 0.0),
+            "data_points": int(first.data_points or 0),
+            "percentage_of_total": (float(first.total_energy_wh or 0.0) / total_top_wh * 100.0) if total_top_wh > 0 else 0.0,
+        }
+
+        comparison = [
+            {
+                "device_name": r.device_name,
+                "total_energy_wh": float(r.total_energy_wh or 0.0),
+                "percentage": (float(r.total_energy_wh or 0.0) / total_top_wh * 100.0) if total_top_wh > 0 else 0.0,
+            }
+            for r in top
+        ]
+
+        return {
+            "device": device,
+            "time_period": {
+                "start": tr.start.isoformat(),
+                "end": tr.end.isoformat(),
+                "readable": time_range_str.replace("_", " ").title(),
             },
-            'time_period': {
-                'start': time_range.start.isoformat(),
-                'end': time_range.end.isoformat(),
-                'readable': time_range_str.replace('_', ' ').title()
-            },
-            'comparison': [{
-                'device_name': d.device_name,
-                'total_energy_wh': float(d.total_energy_wh) if d.total_energy_wh else 0.0,
-                'percentage': (float(d.total_energy_wh) / total_energy * 100) 
-                            if total_energy > 0 else 0.0
-            } for d in top_devices]
+            "comparison": comparison,
         }
