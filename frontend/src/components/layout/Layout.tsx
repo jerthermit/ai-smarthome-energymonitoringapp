@@ -23,14 +23,8 @@ const Layout = () => {
   const userInitial = userDisplayName.charAt(0).toUpperCase();
   const userRole = user?.is_superuser ? 'Admin' : 'User';
 
-  // Navigation items with icons - Only Dashboard remains
-  const navItems = [
-    { 
-      name: 'Dashboard', 
-      href: '/dashboard', 
-      icon: <Icons.dashboard className="h-4 w-4" /> 
-    }
-  ];
+  // Navigation items - Currently empty as we only have one page
+  const navItems: { name: string; href: string; icon: React.ReactNode }[] = [];
 
   // Check if current route matches nav item
   const isActive = (path: string) => location.pathname === path;
@@ -41,13 +35,15 @@ const Layout = () => {
       <header className="sticky top-0 z-50 w-full border-b border-primary/10 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/95 shadow-sm">
         <div className="container flex h-14 md:h-16 items-center justify-between px-4 sm:px-6">
           <div className="flex items-center space-x-4 md:space-x-8">
-            <Link to="/" className="flex items-center space-x-2 group">
-              <div className="p-1 md:p-1.5 rounded-lg bg-gradient-to-br from-primary to-secondary shadow-lg">
-                <Icons.bolt className="h-4 w-4 md:h-5 md:w-5 text-primary-foreground group-hover:scale-110 transition-transform" />
+            <Link to="/" className="group">
+              <div className="flex items-center space-x-3">
+                <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-primary to-secondary shadow-lg">
+                  <Icons.dashboard className="h-5 w-5 md:h-6 md:w-6 text-primary-foreground" />
+                </div>
+                <span className="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                  AI Smart Home Monitor
+                </span>
               </div>
-              <span className="text-lg md:text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-                Energy Monitor
-              </span>
             </Link>
             
             <nav className="hidden md:flex items-center space-x-1">
