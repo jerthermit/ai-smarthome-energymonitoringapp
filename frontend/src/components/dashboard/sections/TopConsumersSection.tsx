@@ -9,7 +9,7 @@ import {
   CardContent,
 } from '../../ui/card';
 import { Activity } from 'lucide-react';
-import TopDevicesChart from '../../../components/charts/TopDevicesChart';
+import TopDevicesChart from '../charts/TopDevicesChart';
 
 interface ConsumerData {
   deviceId: string;

@@ -8,17 +8,26 @@ import TimeRangeTabs from './sections/TimeRangeTabs';
 import KeyMetrics from './sections/KeyMetrics';
 import HourlySummarySection from './sections/HourlySummarySection';
 import TopConsumersSection from './sections/TopConsumersSection';
+import AggregateConsumptionSection from './sections/AggregateConsumptionSection';
 import DeviceEnergySection from './sections/DeviceEnergySection';
 import ScrollToTop from '../ui/ScrollToTop';
 import useDashboardData from './hooks/useDashboardData';
 
 type DashboardTimeRange = 'day' | '3days' | 'week';
 
+type TimeRange = 'hour' | 'day' | 'week' | 'month';
+
 const timeRangeOptions: { value: DashboardTimeRange; label: string }[] = [
   { value: 'day',   label: 'Today' },
   { value: '3days', label: 'Last 3 Days' },
   { value: 'week',  label: 'Last 7 Days' },
 ];
+
+// Convert DashboardTimeRange to TimeRange (maps '3days' to 'day')
+const toTimeRange = (range: DashboardTimeRange): TimeRange => {
+  if (range === '3days') return 'day';
+  return range as TimeRange;
+};
 
 const Dashboard: React.FC = () => {
   const {
@@ -72,6 +81,8 @@ const Dashboard: React.FC = () => {
               error={error}
             />
           </div>
+          
+
 
           <div className="h-full">
             <KeyMetrics
@@ -83,22 +94,38 @@ const Dashboard: React.FC = () => {
             />
           </div>
 
-          <div className="h-full">
-            <div className="flex flex-col space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-semibold">Top Energy Consumers</h3>
-                <TimeRangeTabs
-                  value={timeRange}
-                  onChange={setTimeRange}
-                  options={timeRangeOptions}
-                />
+<div className="lg:col-span-2">
+            <div className="flex flex-col space-y-6">
+              {/* Aggregate Chart Section */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-semibold">Energy Consumption</h3>
+                  <TimeRangeTabs
+                    value={timeRange}
+                    onChange={setTimeRange}
+                    options={timeRangeOptions}
+                  />
+                </div>
+                <div className="bg-card rounded-lg border p-4">
+                  <AggregateConsumptionSection 
+                    timeRange={toTimeRange(timeRange)}
+                    deviceIds={selectedDeviceId !== 'all' ? [selectedDeviceId] : undefined}
+                  />
+                </div>
               </div>
-              <TopConsumersSection
-                data={devicesWithNames}
-                isLoading={isLoading}
-                timeRange={timeRange}
-                error={error}
-              />
+
+              {/* Top Consumers Section */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold">Top Energy Consumers</h3>
+                <div className="bg-card rounded-lg border p-4">
+                  <TopConsumersSection
+                    data={devicesWithNames}
+                    isLoading={isLoading}
+                    timeRange={timeRange}
+                    error={error}
+                  />
+                </div>
+              </div>
             </div>
           </div>
 

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/card';
-import HourlySummaryChart from '../../../components/charts/HourlySummaryChart';
+import HourlySummaryChart from '../charts/HourlySummaryChart';
 import { Clock } from 'lucide-react';
 
 interface HourlyData {

@@ -3,7 +3,7 @@
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/card';
 import { Clock } from 'lucide-react';
-import DeviceEnergyChart from '../../../components/charts/DeviceEnergyChart';
+import DeviceEnergyChart from '../charts/DeviceEnergyChart';
 
 interface Device {
   id: string;
