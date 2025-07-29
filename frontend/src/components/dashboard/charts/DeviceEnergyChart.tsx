@@ -19,7 +19,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Skeleton } from '../../ui/skeleton';
 import { chartConfig } from './chart-config';
 import api from '../../../services/api';
-import type { TimeRange } from '../../../types/dashboard';
+// Import types from the centralized dashboard types file
+import type { TimeRange, AggregatePoint } from '../../../types/dashboard';
 
 ChartJS.register(
   CategoryScale,
@@ -32,11 +33,12 @@ ChartJS.register(
   Filler
 );
 
-type AggregatePoint = {
-  timestamp: string;   // bucket start (UTC ISO)
-  value: number;       // Wh in the bucket
-  device_count: number;
-};
+// Removed local AggregatePoint type definition:
+// type AggregatePoint = {
+//   timestamp: string;   // bucket start (UTC ISO)
+//   value: number;       // Wh in the bucket
+//   device_count: number;
+// };
 
 type Granularity = 'hour' | 'day';
 
