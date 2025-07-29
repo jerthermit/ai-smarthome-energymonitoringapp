@@ -1,3 +1,5 @@
+# backend/app/telemetry/api.py
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -38,6 +40,21 @@ def _normalize_device_ids(device_ids: Optional[List[str]]) -> Optional[List[str]
         parts = [p.strip() for p in item.split(",") if p.strip()]
         out.extend(parts)
     return out or None
+
+
+# --- helpers for canonical ranges ---
+_VALID_LOGICAL_RANGES = {"day", "3days", "week"}
+
+def _parse_logical_range(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    v = value.strip().lower()
+    if v not in _VALID_LOGICAL_RANGES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid range '{value}'. Valid values: day, 3days, week."
+        )
+    return v
 
 
 @router.post("", response_model=schemas.TelemetryInDB, status_code=status.HTTP_201_CREATED)
@@ -136,15 +153,25 @@ async def get_device(
 
 @router.get("/aggregate", response_model=List[schemas.AggregateDataPoint])
 async def get_aggregate_telemetry(
+    # Legacy params (kept for backwards compatibility)
     time_range: schemas.TimeRange = Query(
         schemas.TimeRange.DAY,
-        description="Aggregation window: hour, day, week, month."
+        description="Aggregation window: hour, day, week, month. (legacy)"
     ),
     resolution_minutes: int = Query(
         15,
         ge=1,
         le=1440,
-        description="Aggregation bucket size in minutes (1–1440)."
+        description="Aggregation bucket size in minutes (1–1440). (legacy)"
+    ),
+    # Canonical range (new, optional)
+    range: Optional[str] = Query(
+        None,
+        description="Canonical range: day | 3days | week. If provided, overrides legacy params."
+    ),
+    tz: Optional[str] = Query(
+        "Asia/Singapore",
+        description="IANA timezone used for local calendar alignment (default: Asia/Singapore)."
     ),
     device_ids: Optional[List[str]] = Query(
         None,
@@ -159,13 +186,28 @@ async def get_aggregate_telemetry(
     """
     Get aggregated telemetry data for visualization.
 
-    Returns time-series data of total energy consumption across all or selected devices,
-    aggregated into fixed time intervals. Timestamps are UTC; clients should display in
-    the browser's local time.
+    If `range` is provided, uses canonical local-time windows aligned to calendar days
+    (same semantics the frontend charts expect):
+      - range=day   -> [today 00:00, now) hourly
+      - range=3days -> [today 00:00-3d, today 00:00) daily (exclude today)
+      - range=week  -> [today 00:00-7d, today 00:00) daily (exclude today)
+
+    Otherwise, falls back to the legacy moving-window behavior.
     """
     try:
         normalized_device_ids = _normalize_device_ids(device_ids)
+        logical_range = _parse_logical_range(range)
 
+        if logical_range:
+            return service.get_aggregate_telemetry_windowed(
+                db=db,
+                user_id=current_user.id,
+                range_key=logical_range,  # 'day' | '3days' | 'week'
+                tz=tz or "Asia/Singapore",
+                device_ids=normalized_device_ids,
+            )
+
+        # Legacy path
         query = schemas.AggregateQuery(
             time_range=time_range,
             resolution_minutes=resolution_minutes,
@@ -185,11 +227,21 @@ async def get_aggregate_telemetry(
 
 @router.get("/energy_summary", response_model=List[schemas.DeviceEnergySummary])
 async def get_device_energy_summary(
-    start_time: datetime = Query(
-        ..., description="ISO 8601 start time; assumed UTC if no timezone provided."
+    # Canonical option (new, optional)
+    range: Optional[str] = Query(
+        None,
+        description="Canonical range: day | 3days | week. If provided, start_time/end_time are ignored."
     ),
-    end_time: datetime = Query(
-        ..., description="ISO 8601 end time; assumed UTC if no timezone provided."
+    tz: Optional[str] = Query(
+        "Asia/Singapore",
+        description="IANA timezone used for local calendar alignment (default: Asia/Singapore)."
+    ),
+    # Legacy explicit window (still supported)
+    start_time: Optional[datetime] = Query(
+        None, description="ISO 8601 start time; assumed UTC if no timezone provided. (legacy)"
+    ),
+    end_time: Optional[datetime] = Query(
+        None, description="ISO 8601 end time; assumed UTC if no timezone provided. (legacy)"
     ),
     device_ids: Optional[List[str]] = Query(
         None,
@@ -202,21 +254,40 @@ async def get_device_energy_summary(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Return integrated energy per device (kWh) over [start_time, end_time], scoped to the current user.
+    Return integrated energy per device (kWh), scoped to the current user.
 
-    Integration matches /aggregate:
-      - Step-hold previous power reading
-      - Cap gaps at 15 minutes to avoid runaway energy during outages
+    If `range` is provided, uses canonical local-time windows (matches charts):
+      - range=day   -> [today 00:00, now)
+      - range=3days -> [today 00:00-3d, today 00:00)
+      - range=week  -> [today 00:00-7d, today 00:00)
+
+    Otherwise, requires start_time and end_time (legacy behavior).
     """
+    normalized_device_ids = _normalize_device_ids(device_ids)
+    logical_range = _parse_logical_range(range)
+
+    if logical_range:
+        return service.get_device_energy_summary_windowed(
+            db=db,
+            user_id=current_user.id,
+            range_key=logical_range,          # 'day' | '3days' | 'week'
+            tz=tz or "Asia/Singapore",
+            device_ids=normalized_device_ids,
+        )
+
+    # Legacy path requires both start & end
     start_dt = _to_utc(start_time)
     end_dt = _to_utc(end_time)
+    if not start_dt or not end_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either provide range=day|3days|week, or provide both start_time and end_time."
+        )
     if start_dt > end_dt:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="start_time must be <= end_time",
         )
-
-    normalized_device_ids = _normalize_device_ids(device_ids)
 
     return service.get_device_energy_summary(
         db=db,
