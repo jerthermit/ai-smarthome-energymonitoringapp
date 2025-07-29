@@ -24,19 +24,15 @@ interface TopConsumersSectionProps {
   error: Error | null;
 }
 
+const rangeLabel = (r: 'day' | '3days' | 'week') =>
+  r === 'day' ? 'Today' : r === '3days' ? 'Last 3 Days' : 'Last 7 Days';
+
 const TopConsumersSection: React.FC<TopConsumersSectionProps> = ({
   data,
   timeRange,
   isLoading,
   error,
 }) => {
-  const label =
-    timeRange === 'day'
-      ? 'Today'
-      : timeRange === '3days'
-      ? 'Last 3 Days'
-      : 'Last 7 Days';
-
   return (
     <Card className="border shadow-sm hover:shadow-md transition-shadow duration-200 h-full flex flex-col">
       <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
@@ -44,11 +40,12 @@ const TopConsumersSection: React.FC<TopConsumersSectionProps> = ({
           <div className="p-1.5 sm:p-2 rounded-lg bg-secondary/10 text-secondary-foreground">
             <Activity className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
-          <div>
-            {/* Updated section title */}
-            <CardTitle className="text-base sm:text-lg">Top Energy Consuming Devices</CardTitle>
-            <CardDescription className="text-xs sm:text-sm">
-              {label}’s highest consumers
+          <div className="text-left">
+            <CardTitle className="text-base sm:text-lg text-left">
+              Top Energy Consuming Devices
+            </CardTitle>
+            <CardDescription className="text-xs sm:text-sm text-left">
+              {rangeLabel(timeRange)}
             </CardDescription>
           </div>
         </div>
