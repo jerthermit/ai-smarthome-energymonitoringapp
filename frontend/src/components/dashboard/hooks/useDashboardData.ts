@@ -35,13 +35,20 @@ export default function useDashboardData(timeRange: TimeRange) {
   });
 
   // Top devices with friendly names
-  const devicesWithNames = useMemo(
+  const topDevicesWithNames = useMemo(
     () =>
       (analyticsData.topDevices ?? []).map((t) => ({
         ...t,
         name: devices.find((d) => d.id === t.deviceId)?.name || t.deviceId,
       })),
     [analyticsData.topDevices, devices]
+  );
+
+  // Hourly energy consumption data from analytics, prepared for charts
+  // This directly uses the hourlyData from useAnalytics, which is already in kWh
+  const hourlyEnergyConsumption = useMemo(
+    () => analyticsData.hourlyData,
+    [analyticsData.hourlyData]
   );
 
   // Selected device object (for display)
@@ -59,9 +66,11 @@ export default function useDashboardData(timeRange: TimeRange) {
     selectedDevice,
 
     // data
+    // Exposing analyticsData directly allows components to access raw totals and specific structures
     analyticsData,
     devices,
-    devicesWithNames,
+    topDevicesWithNames, // Renamed for clarity
+    hourlyEnergyConsumption, // Explicitly named for chart consumption
 
     // status
     isLoading,
