@@ -1,3 +1,5 @@
+// frontend/src/components/dashboard/sections/DeviceEnergySection.tsx
+
 import React from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/card';
 import { Clock } from 'lucide-react';
@@ -21,6 +23,8 @@ interface DeviceEnergySectionProps {
   isLoading?: boolean;
 }
 
+const rangeLabel = (r: TimeRange) => (r === 'day' ? 'Today' : r === '3days' ? 'Last 3 Days' : 'Last 7 Days');
+
 const DeviceEnergySection: React.FC<DeviceEnergySectionProps> = ({
   devices,
   selectedDeviceId,
@@ -34,12 +38,12 @@ const DeviceEnergySection: React.FC<DeviceEnergySectionProps> = ({
         <div className="p-1.5 sm:p-2 rounded-lg bg-primary/10 text-primary">
           <Clock className="h-4 w-4 sm:h-5 sm:w-5" />
         </div>
-        <div>
-          <CardTitle className="text-base sm:text-lg">Device Energy Usage</CardTitle>
-          <CardDescription className="text-xs sm:text-sm">
+        <div className="text-left">
+          <CardTitle className="text-base sm:text-lg text-left">Device Energy Usage</CardTitle>
+          <CardDescription className="text-xs sm:text-sm text-left">
             {selectedDeviceId === 'all'
-              ? 'Combined energy usage across all devices'
-              : `Detailed view for ${selectedDeviceName}`}
+              ? `Combined energy usage across all devices — ${rangeLabel(timeRange)}`
+              : `${selectedDeviceName} — ${rangeLabel(timeRange)}`}
           </CardDescription>
         </div>
       </div>
