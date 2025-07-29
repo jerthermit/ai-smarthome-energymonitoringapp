@@ -1,11 +1,10 @@
 # backend/app/ai/orchestrator.py
 """
-Lean, deterministic orchestrator:
-- Routes to ENERGY / SMALLTALK / GENERAL without calling the LLM.
-- Extracts time range (UTC), device candidates, and rank (highest/lowest).
-- Keeps logic fast and predictable for production-ish performance.
+Lean, deterministic orchestrator for routing user queries.
 
-This file is provider-agnostic. No network calls here.
+- Routes to ENERGY, SMALLTALK, or GENERAL intents without LLM calls.
+- Extracts key entities: time range, device candidates, and ranking.
+- Prioritizes speed, predictability, and being provider-agnostic.
 """
 
 from __future__ import annotations
@@ -13,289 +12,258 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Sequence
 from enum import Enum
+from typing import Any, Dict, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+# -------- Public Data Structures --------
 
-# -------- Public enums / dataclasses expected by service.py --------
 
 class RouteIntent(str, Enum):
+    """Enumeration for the classified intent of a user query."""
+
     ENERGY = "energy"
     SMALLTALK = "smalltalk"
     GENERAL = "general"
+    UNSURE = "unsure"
 
 
 @dataclass
 class TimeRangeParams:
+    """Represents a parsed time range with UTC start/end and granularity."""
+
     label: str
-    start_utc: Optional[datetime]
-    end_utc: Optional[datetime]
+    start_utc: datetime
+    end_utc: datetime
     granularity: str  # "minute" | "hour" | "day"
 
 
 @dataclass
 class ParsedSlots:
+    """Holds all entities extracted from the user query."""
+
     time: Optional[TimeRangeParams] = None
     devices: List[str] = field(default_factory=list)
-    rank: Optional[str] = None              # "highest" | "lowest" | None
+    rank: Optional[str] = None  # "highest" | "lowest"
     needs_clarification: bool = False
-    clarifying_question: Optional[str] = None
+    clarification_question: Optional[str] = None
 
 
 @dataclass
 class Decision:
+    """The final output of the orchestrator's decision process."""
+
     intent: RouteIntent
     parsed: ParsedSlots
     user_text: str
     confidence: float
 
 
-# -------- Orchestrator implementation --------
+# -------- Orchestrator Implementation --------
+
 
 class Orchestrator:
+    """
+    A rule-based orchestrator that classifies user intent and extracts entities
+    for energy-related queries.
+    """
+
     ENERGY_TERMS = {
-        "energy", "usage", "consumption", "power", "kwh", "kilowatt", "watt", "bill", "cost"
+        "energy", "usage", "consumption", "power", "kwh", "kilowatt", "watt", "bill", "cost",
+        "how much", "what did", "what was",
     }
     TIME_TERMS = {
-        "today", "yesterday", "week", "month", "hour", "hours", "days", "past", "last", "this"
+        "today", "yesterday", "week", "month", "hour", "day", "minute", "past", "last", "this"
     }
-    RANK_HIGH = {"highest", "top", "most", "max"}
-    RANK_LOW = {"lowest", "least", "min"}
+    RANK_HIGH = {"highest", "top", "most", "max", "biggest"}
+    RANK_LOW = {"lowest", "least", "min", "smallest"}
 
-    # light smalltalk detector (no DB/LLM)
     SMALLTALK_PATTERNS = [
-        r"^\s*hi\b.*$",
-        r"^\s*hello\b.*$",
-        r"^\s*hey\b.*$",
-        r"^\s*yo\b.*$",
-        r"\bgood\s*(morning|afternoon|evening)\b",
-        r"\bhow are you\b",
-        r"\bwhat'?s up\b",
+        re.compile(r"^\s*(hi|hello|hey|yo)\b.*$", re.IGNORECASE),
+        re.compile(r"\b(good\s*(morning|afternoon|evening)|how are you|what'?s up)\b", re.IGNORECASE),
     ]
 
-    # basic device synonyms to help when there are no known device names
-    DEVICE_SYNONYMS = {
-        "ac": ["ac", "aircon", "air con", "air conditioner", "a/c"],
-        "heater": ["heater", "water heater", "boiler"],
-        "fridge": ["fridge", "refrigerator"],
-        "light": ["light", "lights", "bulb", "lamp"],
-        "tv": ["tv", "television"],
-        "pc": ["pc", "computer", "desktop"],
-        "fan": ["fan", "ceiling fan", "stand fan"],
-        "washer": ["washer", "washing machine"],
-        "dryer": ["dryer"],
-        "dishwasher": ["dishwasher"],
-    }
+    # Pre-compiled regex for performance
+    TIME_REGEX_PATTERNS = [
+        ("today", re.compile(r"\btoday\b", re.IGNORECASE)),
+        ("yesterday", re.compile(r"\byesterday\b", re.IGNORECASE)),
+        ("this_week", re.compile(r"\bthis\s+week\b", re.IGNORECASE)),
+        ("this_month", re.compile(r"\bthis\s+month\b", re.IGNORECASE)),
+        ("last_week", re.compile(r"\b(last|past)\s+week\b", re.IGNORECASE)),
+        ("last_7_days", re.compile(r"\b(last|past)\s+7\s*days\b", re.IGNORECASE)),
+        ("relative_time", re.compile(r"\b(last|past)\s*(\d+)\s*(minutes?|hours?|days?|weeks?|months?)\b", re.IGNORECASE)),
+    ]
 
-    def __init__(self, ai_provider: Any = None, local_tz: str = "Asia/Singapore"):
-        # ai_provider is accepted for API compatibility; not used in this lean version.
-        self.local_tz = ZoneInfo(local_tz)
-
-    # -------- Public API --------
+    def __init__(self, local_tz: str = "Asia/Singapore"):
+        try:
+            self.local_tz = ZoneInfo(local_tz)
+        except Exception:
+            self.local_tz = timezone.utc
 
     async def decide(
         self,
-        messages: Sequence[Any],
+        messages: Sequence[Dict[str, str]],
         known_device_names: Optional[Sequence[str]] = None,
     ) -> Decision:
-        user_text = self._latest_user_text(messages).strip()
-        t = user_text.lower()
+        """
+        Analyzes the latest user message to determine intent and extract parameters.
 
-        # Smalltalk (short and no energy cues)
-        if self._is_smalltalk(t):
-            return Decision(
-                intent=RouteIntent.SMALLTALK,
-                parsed=ParsedSlots(),
-                user_text=user_text,
-                confidence=0.9,
-            )
+        Args:
+            messages: A sequence of message dictionaries, e.g., [{"role": "user", "content": "..."}].
+            known_device_names: A list of device names from the database.
 
-        # Try ENERGY detection
-        parsed = ParsedSlots()
-        has_energy_word = any(w in t for w in self.ENERGY_TERMS)
-        has_time_hint = self._contains_time_hint(t)
-        device_candidates = self._extract_devices(t, known_device_names or [])
-        rank = self._extract_rank(t)
-        time_params = self._parse_time_range(t)
+        Returns:
+            A Decision object containing the routing intent and parsed data.
+        """
+        user_text = self._latest_user_text(messages)
+        if not user_text:
+            return Decision(RouteIntent.UNSURE, ParsedSlots(), "", 0.0)
 
-        if (has_energy_word or device_candidates) and (has_time_hint or time_params is not None):
-            parsed.devices = device_candidates
-            parsed.rank = rank
-            parsed.time = time_params or self._default_time_range()  # if vague "this" etc.
-            # confidence high if both device/energy and explicit time present
-            conf = 0.85 if time_params else 0.7
-            # if still no explicit time, nudge once
-            if time_params is None:
-                parsed.needs_clarification = True
-                parsed.clarifying_question = "Use today or the last 7 days?"
-            return Decision(
-                intent=RouteIntent.ENERGY,
-                parsed=parsed,
-                user_text=user_text,
-                confidence=conf,
-            )
+        lower_text = user_text.lower()
 
-        # Explicit device query like "top device" without energy word but with time
-        if (rank is not None) and (time_params is not None or "today" in t or "yesterday" in t):
-            parsed.devices = device_candidates
-            parsed.rank = rank
-            parsed.time = time_params or self._default_time_range()
-            return Decision(
-                intent=RouteIntent.ENERGY,
-                parsed=parsed,
-                user_text=user_text,
-                confidence=0.8,
-            )
+        # 1. Check for Smalltalk first
+        if self._is_smalltalk(lower_text):
+            return Decision(RouteIntent.SMALLTALK, ParsedSlots(), user_text, 0.95)
 
-        # Generic but mentions time and "device" → treat as energy
-        if ("device" in t or "devices" in t) and has_time_hint:
-            parsed.devices = device_candidates
-            parsed.time = time_params or self._default_time_range()
-            return Decision(
-                intent=RouteIntent.ENERGY,
-                parsed=parsed,
-                user_text=user_text,
-                confidence=0.7,
-            )
+        # 2. Extract all possible signals from the text
+        slots = self._extract_all_slots(lower_text, known_device_names or [])
 
-        # Otherwise GENERAL
-        return Decision(
-            intent=RouteIntent.GENERAL,
-            parsed=ParsedSlots(),
-            user_text=user_text,
-            confidence=0.5,
-        )
+        # 3. Decide intent based on extracted signals
+        has_energy_signal = any(term in lower_text for term in self.ENERGY_TERMS) or bool(slots.devices)
+        has_temporal_signal = slots.time is not None or any(term in lower_text for term in self.TIME_TERMS)
 
-    # -------- Helpers --------
+        if has_energy_signal and has_temporal_signal:
+            intent = RouteIntent.ENERGY
+            confidence = 0.9
+            # If time was mentioned vaguely (e.g., "last week") but not parsed into a
+            # concrete range, or not mentioned at all, we ask for clarification.
+            if slots.time is None:
+                slots.needs_clarification = True
+                slots.clarification_question = "For what time period? For example: 'today', 'last 24 hours', or 'this month'."
+                confidence = 0.75
+        # Also catch queries like "top device today"
+        elif slots.rank and has_temporal_signal:
+            intent = RouteIntent.ENERGY
+            confidence = 0.85
+        else:
+            intent = RouteIntent.GENERAL
+            confidence = 0.5
 
-    def _latest_user_text(self, messages: Sequence[Any]) -> str:
-        for m in reversed(messages or []):
-            if getattr(m, "role", None) == "user":
-                return getattr(m, "content", "") or ""
+        return Decision(intent, slots, user_text, confidence)
+
+    # -------- Private Helper Methods --------
+
+    def _latest_user_text(self, messages: Sequence[Dict[str, str]]) -> str:
+        """Extracts content from the most recent user message."""
+        for message in reversed(messages or []):
+            if message.get("role") == "user":
+                return (message.get("content") or "").strip()
         return ""
 
     def _is_smalltalk(self, text: str) -> bool:
-        if not text:
-            return False
-        for pat in self.SMALLTALK_PATTERNS:
-            if re.search(pat, text):
-                return True
-        # Very short, no energy cues
-        if len(text.split()) <= 3 and not any(w in text for w in self.ENERGY_TERMS):
-            return True
+        """Determines if the text is likely small talk."""
+        if len(text.split()) <= 4:
+            for pattern in self.SMALLTALK_PATTERNS:
+                if pattern.search(text):
+                    return True
         return False
 
-    def _contains_time_hint(self, text: str) -> bool:
-        return any(k in text for k in self.TIME_TERMS) or bool(
-            re.search(r"\b(last|past)\s*\d+\s*(minutes?|hours?|days?|weeks?|months?)\b", text)
-        )
+    def _extract_all_slots(self, text: str, known_device_names: Sequence[str]) -> ParsedSlots:
+        """Parses the text to fill all possible slots."""
+        time_params = self._parse_time_range(text)
+        devices = self._extract_devices(text, known_device_names)
+        rank = self._extract_rank(text)
+        return ParsedSlots(time=time_params, devices=devices, rank=rank)
 
     def _extract_rank(self, text: str) -> Optional[str]:
-        if any(w in text for w in self.RANK_HIGH):
+        """Extracts 'highest' or 'lowest' ranking keywords."""
+        if any(word in text for word in self.RANK_HIGH):
             return "highest"
-        if any(w in text for w in self.RANK_LOW):
+        if any(word in text for word in self.RANK_LOW):
             return "lowest"
         return None
 
     def _extract_devices(self, text: str, known_device_names: Sequence[str]) -> List[str]:
-        # 1) Exact substring matches for known device names
-        devices = []
-        text_l = text.lower()
-        for name in known_device_names:
-            n = (name or "").strip()
-            if not n:
-                continue
-            if n.lower() in text_l:
-                devices.append(n)
+        """
+        Extracts device names from text, prioritizing known device names.
+        Uses word boundaries to prevent partial matches.
+        """
+        found_devices = set()
+        
+        # 1. Match against known device names from the database first
+        # This is more precise. We sort by length to match longer names first ("Living Room AC" vs "AC")
+        sorted_known_names = sorted(known_device_names, key=len, reverse=True)
+        for name in sorted_known_names:
+            # Use word boundaries to ensure we match whole words/phrases
+            pattern = re.compile(r"\b" + re.escape(name.lower()) + r"\b")
+            if pattern.search(text):
+                found_devices.add(name)
 
-        # 2) Synonym matches if none found
-        if not devices:
-            for canon, syns in self.DEVICE_SYNONYMS.items():
-                for s in syns:
-                    if s in text_l:
-                        devices.append(canon)
-                        break
-        # dedupe, preserve order
-        seen = set()
-        uniq = []
-        for d in devices:
-            dl = d.lower()
-            if dl not in seen:
-                uniq.append(d)
-                seen.add(dl)
-        return uniq
+        # 2. For now, we rely on known device names. Synonym matching can be added here if needed.
+        # Example: if not found_devices: ...
 
-    def _default_time_range(self) -> TimeRangeParams:
-        # last 7 days, local tz → UTC
-        now_local = datetime.now(self.local_tz)
-        start_local = now_local - timedelta(days=7)
-        return self._to_utc_range("last_7_days", start_local, now_local, "day")
+        return list(found_devices)
 
     def _parse_time_range(self, text: str) -> Optional[TimeRangeParams]:
-        t = text
+        """Parses a time range expression from the text using pre-compiled regex."""
         now_local = datetime.now(self.local_tz)
 
-        # today
-        if re.search(r"\btoday\b", t):
-            start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-            return self._to_utc_range("today", start_local, now_local, "hour")
+        for label, pattern in self.TIME_REGEX_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
 
-        # yesterday
-        if re.search(r"\byesterday\b", t):
-            y = (now_local - timedelta(days=1))
-            start_local = y.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_local = y.replace(hour=23, minute=59, second=59, microsecond=999999)
-            return self._to_utc_range("yesterday", start_local, end_local, "hour")
+            if label == "today":
+                start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+                return self._to_utc_range("today", start, now_local, "hour")
 
-        # this week (so far, Monday-based)
-        if re.search(r"\b(this|the)\s+week\b", t):
-            weekday = (now_local.weekday() + 6) % 7  # Monday=0
-            start_local = (now_local - timedelta(days=weekday)).replace(hour=0, minute=0, second=0, microsecond=0)
-            return self._to_utc_range("this_week_so_far", start_local, now_local, "day")
+            if label == "yesterday":
+                yesterday = now_local - timedelta(days=1)
+                start = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+                end = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999)
+                return self._to_utc_range("yesterday", start, end, "hour")
+            
+            if label == "this_week":
+                # isoweekday(): Monday is 1 and Sunday is 7
+                start = now_local - timedelta(days=now_local.isoweekday() - 1)
+                start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+                return self._to_utc_range("this_week_so_far", start, now_local, "day")
 
-        # this month (so far)
-        if re.search(r"\b(this|the)\s+month\b", t):
-            start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            return self._to_utc_range("this_month_so_far", start_local, now_local, "day")
+            if label == "this_month":
+                start = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                return self._to_utc_range("this_month_so_far", start, now_local, "day")
 
-        # last / past week OR last / past 7 days
-        if re.search(r"\b(past|last)\s+week\b", t) or re.search(r"\b(last|past)\s*7\s*days\b", t):
-            start_local = now_local - timedelta(days=7)
-            return self._to_utc_range("last_week", start_local, now_local, "day")
+            if label in ("last_week", "last_7_days"):
+                start = now_local - timedelta(days=7)
+                return self._to_utc_range("last_7_days", start, now_local, "day")
 
-        # last|past N minutes/hours/days/weeks/months
-        m = re.search(r"\b(last|past)\s*(\d+)\s*(minutes?|hours?|days?|weeks?|months?)\b", t)
-        if m:
-            n = int(m.group(2))
-            unit = m.group(3)
-            if "minute" in unit:
-                start_local = now_local - timedelta(minutes=n)
-                gran = "minute"
-            elif "hour" in unit:
-                start_local = now_local - timedelta(hours=n)
-                gran = "hour"
-            elif "day" in unit:
-                start_local = now_local - timedelta(days=n)
-                gran = "day"
-            elif "week" in unit:
-                start_local = now_local - timedelta(weeks=n)
-                gran = "day"
-            else:
-                # months → approximate as 30 * n days
-                start_local = now_local - timedelta(days=30 * n)
-                gran = "day"
-            return self._to_utc_range(f"last_{n}_{unit}", start_local, now_local, gran)
+            if label == "relative_time":
+                n = int(match.group(2))
+                unit = match.group(3).rstrip('s')
+                
+                delta_map = {
+                    "minute": timedelta(minutes=n),
+                    "hour": timedelta(hours=n),
+                    "day": timedelta(days=n),
+                    "week": timedelta(weeks=n),
+                    "month": timedelta(days=30 * n),  # Approximation
+                }
+                granularity_map = {"minute": "minute", "hour": "hour"}
+
+                start = now_local - delta_map[unit]
+                granularity = granularity_map.get(unit, "day")
+                
+                return self._to_utc_range(f"last_{n}_{unit}s", start, now_local, granularity)
 
         return None
 
     def _to_utc_range(
-        self,
-        label: str,
-        start_local: datetime,
-        end_local: datetime,
-        granularity: str,
+        self, label: str, start_local: datetime, end_local: datetime, granularity: str
     ) -> TimeRangeParams:
-        start_utc = start_local.astimezone(timezone.utc)
-        end_utc = end_local.astimezone(timezone.utc)
-        return TimeRangeParams(label=label, start_utc=start_utc, end_utc=end_utc, granularity=granularity)
+        """Converts local start/end datetimes to a UTC TimeRangeParams object."""
+        return TimeRangeParams(
+            label=label,
+            start_utc=start_local.astimezone(timezone.utc),
+            end_utc=end_local.astimezone(timezone.utc),
+            granularity=granularity,
+        )
