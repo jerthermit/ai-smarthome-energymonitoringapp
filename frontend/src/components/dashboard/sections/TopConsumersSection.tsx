@@ -10,15 +10,11 @@ import {
 } from '../../ui/card';
 import { Activity } from 'lucide-react';
 import TopDevicesChart from '../charts/TopDevicesChart';
+import type { TopDevice } from '../../../types/dashboard'; // CHANGED: Import TopDevice type from types/dashboard
 
-interface ConsumerData {
-  deviceId: string;
-  totalEnergy: number;
-  name?: string;
-}
-
+// Use the imported TopDevice type for consistency
 interface TopConsumersSectionProps {
-  data: ConsumerData[];
+  data: TopDevice[]; // Changed from ConsumerData[] to TopDevice[]
   timeRange: 'day' | '3days' | 'week';
   isLoading: boolean;
   error: Error | null;
