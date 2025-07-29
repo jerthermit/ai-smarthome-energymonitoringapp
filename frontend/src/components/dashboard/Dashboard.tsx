@@ -16,10 +16,8 @@ import ScrollToTop from '../ui/ScrollToTop';
 import useDashboardData from './hooks/useDashboardData';
 
 const Dashboard: React.FC = () => {
-  // Dashboard-wide time range tabs: 'day' | '3days' | 'week'
   const [timeRange, setTimeRange] = useState<TimeRange>('week');
 
-  // Now that timeRange exists, we can pass it into the data hook
   const {
     selectedDeviceId,
     setSelectedDeviceId,
@@ -81,6 +79,11 @@ const Dashboard: React.FC = () => {
               <AggregateConsumptionSection
                 timeRange={timeRange}
                 deviceIds={selectedDeviceId !== 'all' ? [selectedDeviceId] : undefined}
+                devices={devices}
+                selectedDeviceId={selectedDeviceId}
+                onSelectDevice={setSelectedDeviceId}
+                showDeviceList={true}
+                isLoading={isLoading}
                 className="w-full"
               />
             </div>
@@ -104,7 +107,7 @@ const Dashboard: React.FC = () => {
                 devices={devices}
                 selectedDeviceId={selectedDeviceId}
                 onSelectDevice={setSelectedDeviceId}
-                timeRange={timeRange} // 'day' | '3days' | 'week'
+                timeRange={timeRange}
                 selectedDeviceName={selectedDevice?.name || 'All Devices'}
                 showDeviceList={true}
                 isLoading={isLoading}
