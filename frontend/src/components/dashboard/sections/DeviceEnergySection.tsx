@@ -26,9 +26,7 @@ interface DeviceEnergySectionProps {
 const rangeLabel = (r: TimeRange) => (r === 'day' ? 'Today' : r === '3days' ? 'Last 3 Days' : 'Last 7 Days');
 
 const DeviceEnergySection: React.FC<DeviceEnergySectionProps> = ({
-  devices,
   selectedDeviceId,
-  onSelectDevice,
   timeRange,
   selectedDeviceName,
 }) => (
