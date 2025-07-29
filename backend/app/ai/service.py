@@ -1,47 +1,41 @@
 # backend/app/ai/service.py
 """
 AI Service Layer.
-- Orchestrator (deterministic parse + optional LLM structured extraction) for intent routing.
-- Routes energy questions to deterministic code (EnergyQueryProcessor).
-- Other prompts go to the LLM with a minimal prompt.
-- Known-device boosting (cached) for better NL parsing.
-- Latency metrics on every response.
-- Robust error wrapping so we always return a valid ChatResponse shape.
-- NEW: Lightweight memory:
-    * follow-up TTL for ENERGY (devices/rank),
-    * rolling recap,
-    * small chat window for GENERAL/SMALLTALK coherence.
+- Orchestrates intent routing using a deterministic orchestrator.
+- Routes energy questions to a dedicated EnergyQueryProcessor.
+- Handles small talk and general queries via an LLM provider.
+- Caches known device names for performance.
+- Includes latency metrics, robust error handling, and conversation memory.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 import time
 import uuid
-from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import asdict
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from .providers import TogetherAIProvider
 from .chat_schemas import ChatRequest, EnergyQueryResponse
 from .energy_service import EnergyQueryProcessor
-from .orchestrator import Orchestrator, RouteIntent
 from .memory import MemoryManager, is_time_only_followup
+from .orchestrator import Decision, Orchestrator, RouteIntent
+from .providers.base import AIProvider
+from .providers.together import TogetherAIProvider
 from app.core.rate_limiter import RateLimiter
-
-# For known device names
 from app.telemetry.models import Device
 
 logger = logging.getLogger(__name__)
 
 
 class _DeviceNameCache:
-    """Very small in-process cache for device names per user (TTL 60s)."""
-    def __init__(self, ttl_seconds: int = 60):
-        self.ttl = max(1, int(ttl_seconds))
-        self._store: Dict[int, Tuple[float, List[str]]] = {}
+    """A simple, in-memory cache for user-specific device names with a TTL."""
+    def __init__(self, ttl_seconds: int = 120):
+        self.ttl = ttl_seconds
+        self._store: Dict[int, tuple[float, List[str]]] = {}
 
     def get(self, db: Session, user_id: int) -> List[str]:
         now = time.time()
@@ -49,341 +43,243 @@ class _DeviceNameCache:
         if entry and (now - entry[0] < self.ttl):
             return entry[1]
 
-        names = [r[0] for r in db.query(Device.name).filter(Device.user_id == user_id).all()]
-        uniq, seen = [], set()
-        for n in names:
-            s = (n or "").strip()
-            if s and s.lower() not in seen:
-                uniq.append(s)
-                seen.add(s.lower())
-        self._store[user_id] = (now, uniq)
-        return uniq
+        logger.debug(f"Device name cache miss for user_id: {user_id}. Fetching from DB.")
+        query = db.query(Device.name).filter(Device.user_id == user_id)
+        names = [row[0] for row in query.all() if row[0]]
+        
+        seen = set()
+        unique_names = []
+        for name in names:
+            if name.lower() not in seen:
+                seen.add(name.lower())
+                unique_names.append(name)
 
-
-def _latest_user_text(messages: List[Any]) -> str:
-    for m in reversed(messages or []):
-        if getattr(m, "role", None) == "user":
-            return getattr(m, "content", "") or ""
-    return ""
-
-
-def _looks_like_recap_question(text: str) -> bool:
-    t = (text or "").lower().strip()
-    if not t:
-        return False
-    return bool(
-        re.search(r"\b(what\s+have\s+we\s+(discussed|talked)\s+(so\s+far|today)?|recap|summary)\b", t)
-    )
+        self._store[user_id] = (now, unique_names)
+        return unique_names
 
 
 class AIService:
-    """Service layer for AI operations with orchestrated routing + memory + metrics."""
-
+    """Service layer for AI operations with orchestrated routing, memory, and metrics."""
     def __init__(self, db_session: Session):
         self.db_session = db_session
-        self.provider = TogetherAIProvider()
-        self.orchestrator = Orchestrator(ai_provider=self.provider, local_tz="Asia/Singapore")
-        from app.ai.data.energy_repository import EnergyRepository
-        self.energy_query_processor = EnergyQueryProcessor(
-            ai_provider=self.provider,
-            energy_repo=EnergyRepository(db_session)
-        )
-        self._device_cache = _DeviceNameCache(ttl_seconds=60)
+        self.provider: AIProvider = TogetherAIProvider()
+        self.orchestrator = Orchestrator()
+        
+        from app.telemetry.service import get_user_devices
+        self.energy_processor = EnergyQueryProcessor(db=db_session)
+        self._device_cache = _DeviceNameCache()
         self.mem = MemoryManager.instance()
 
     async def chat(self, user_id: int, request: ChatRequest) -> Dict[str, Any]:
-        limiter = RateLimiter.get_instance()
         t0 = time.perf_counter()
+        limiter = RateLimiter.get_instance()
+        user_text = request.latest_user_content()
+        response: Dict[str, Any]
 
-        # Pull latest user text early (used by memory and recap)
-        user_text = _latest_user_text(request.messages).strip()
-
-        # Deterministic recap handler
-        if _looks_like_recap_question(user_text):
-            recap = self.mem.recap.get_recap(user_id)
-            resp = self._simple_assistant_completion(recap)
-            resp["metrics"] = self._metrics(branch="recap", start=t0)
-            # track memory/history
-            self.mem.history.add(user_id, "user", user_text)
-            self.mem.history.add(user_id, "assistant", recap)
-            return resp
-
-        # Known devices (helps parse)
         try:
+            if not user_text:
+                response = self._simple_assistant_completion("Please type a message and try again.")
+                response["metrics"] = self._metrics(branch="empty_input", start=t0)
+                return response
+
             known_devices = self._device_cache.get(self.db_session, user_id)
+            messages_as_dicts = [m.model_dump() for m in request.messages]
+            decision = await self.orchestrator.decide(messages_as_dicts, known_devices)
+
+            decision = self._handle_follow_up(user_id, user_text, decision)
+
+            if decision.intent == RouteIntent.ENERGY:
+                response = await self._handle_energy_intent(
+                    user_id, decision, known_devices, limiter, t0, self.orchestrator.local_tz.key
+                )
+            elif decision.intent in (RouteIntent.SMALLTALK, RouteIntent.GENERAL, RouteIntent.UNSURE):
+                response = await self._handle_llm_intent(user_id, request, decision, known_devices, limiter, t0)
+            else:
+                response = self._simple_assistant_completion("I'm not sure how to handle that.")
+                response["metrics"] = self._metrics(branch="unhandled_intent", start=t0, extra={"intent": decision.intent})
+
+        except HTTPException:
+            raise
         except Exception:
-            logger.warning("Device name fetch failed; continuing without known devices.", exc_info=True)
-            known_devices = None
+            logger.exception("Core AI service chat flow failed. Providing a fallback response.")
+            response = self._simple_assistant_completion("Sorry, I encountered an unexpected error. Please try again.")
+            response["metrics"] = self._metrics(branch="service_error", start=t0)
 
-        # Decide route using orchestrator
-        try:
-            decision = await self.orchestrator.decide(
-                messages=request.messages,
-                known_device_names=known_devices
-            )
-        except Exception:
-            logger.exception("Orchestrator failed; falling back to GENERAL minimal reply.")
-            resp = self._simple_assistant_completion("Sorry, I had trouble understanding that. Try again?")
-            resp["metrics"] = self._metrics(branch="orchestrator_error", start=t0)
-            # history
-            self.mem.history.add(user_id, "user", user_text)
-            self.mem.history.add(user_id, "assistant", resp["choices"][0]["message"]["content"])
-            return resp
-
-        if not user_text:
-            resp = self._simple_assistant_reply("Please type a message and try again.")
-            resp["metrics"] = self._metrics(branch="empty", start=t0)
-            # history
-            self.mem.history.add(user_id, "assistant", resp["choices"][0]["message"]["content"])
-            return resp
-
-        # ---------------- Follow-up override ----------------
-        # If the user asked a time-only follow-up, reuse prior ENERGY devices/rank.
-        if is_time_only_followup(user_text):
-            prev = self.mem.followups.get_if_fresh(user_id)
-            if prev and decision.parsed and decision.parsed.time:
-                # Force ENERGY with previous devices/rank
-                decision.intent = RouteIntent.ENERGY
-                # If no devices parsed, use previous
-                if not decision.parsed.devices:
-                    decision.parsed.devices = list(prev.devices or [])
-                # If no rank parsed, reuse previous
-                if not decision.parsed.rank:
-                    decision.parsed.rank = prev.rank
-
-        # Rate limit (allocate 0 tokens for deterministic energy branch)
-        requested_tokens = 0 if decision.intent == RouteIntent.ENERGY else (request.max_tokens or 0)
-        if not limiter.allow_request(user_id, requested_tokens):
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
-
-        # ---------------- ENERGY ----------------
-        if decision.intent == RouteIntent.ENERGY:
-            try:
-                # Deterministic execution using parsed slots
-                model_response: EnergyQueryResponse = await self.energy_query_processor.process_with_params(
-                    user_id=user_id,
-                    user_query=user_text,
-                    parsed={
-                        "time": {
-                            "label": (decision.parsed.time.label if decision.parsed.time else None),
-                            "start_utc": (decision.parsed.time.start_utc.isoformat() if decision.parsed.time and decision.parsed.time.start_utc else None),
-                            "end_utc": (decision.parsed.time.end_utc.isoformat() if decision.parsed.time and decision.parsed.time.end_utc else None),
-                            "granularity": (decision.parsed.time.granularity if decision.parsed.time else None),
-                        },
-                        "devices": decision.parsed.devices,
-                        "rank": decision.parsed.rank,
-                    }
-                )
-                ed = model_response.model_dump()
-
-                # Build response
-                assistant_text = ed.get("summary", "")
-                resp = {
-                    "id": f"chatcmpl-energy-{uuid.uuid4().hex}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": "energy-query-processor",
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": assistant_text},
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                    "energy_data": ed
-                }
-                resp["metrics"] = self._metrics(
-                    branch="energy",
-                    start=t0,
-                    extra={"known_devices": len(known_devices or []), "parse_confidence": decision.confidence}
-                )
-
-                # ----- update memories -----
-                # Follow-up memory: keep last ENERGY slots
-                self.mem.followups.set_state(
-                    user_id=user_id,
-                    intent="rank" if decision.parsed.rank else "usage",
-                    devices=(decision.parsed.devices or ["all"]),
-                    rank=decision.parsed.rank
-                )
-                # Recap memory: append a concise line
-                time_label = decision.parsed.time.label if decision.parsed.time else "custom"
-                if decision.parsed.rank:
-                    self.mem.recap.add_line(user_id, f"Top-{decision.parsed.rank} device for {time_label}")
-                else:
-                    dev_phrase = ", ".join(decision.parsed.devices) if decision.parsed.devices else "all"
-                    self.mem.recap.add_line(user_id, f"Checked usage: {dev_phrase}, {time_label}")
-
-                # Chat history
-                self.mem.history.add(user_id, "user", user_text)
-                self.mem.history.add(user_id, "assistant", assistant_text)
-
-                return resp
-            except Exception:
-                logger.error("Energy flow failed", exc_info=True)
-                resp = self._simple_assistant_completion(
-                    "Sorry, I couldn't retrieve your energy data just now. Please try again."
-                )
-                resp["metrics"] = self._metrics(branch="energy_error", start=t0)
-                # history
-                self.mem.history.add(user_id, "user", user_text)
-                self.mem.history.add(user_id, "assistant", resp["choices"][0]["message"]["content"])
-                return resp
-
-        # ---------------- SMALLTALK ----------------
-        if decision.intent == RouteIntent.SMALLTALK:
-            try:
-                # Build short context window (helps coherence)
-                ctx = self.mem.history.window(user_id, take=6)
-                llm_messages = [{"role": "system", "content": (
-                    "You are a concise, friendly assistant for a smart home energy app. "
-                    "Respond very briefly to greetings/small talk."
-                )}]
-                llm_messages.extend(ctx)
-                llm_messages.append({"role": "user", "content": user_text})
-
-                provider_resp = await self.provider.chat_completion(
-                    messages=llm_messages,
-                    temperature=min(max(request.temperature, 0.0), 0.7),
-                    max_tokens=min(max(request.max_tokens, 32), 96),
-                )
-            except Exception:
-                logger.error("LLM smalltalk call failed", exc_info=True)
-                provider_resp = {"error": "exception"}
-
-            response = self._wrap_or_fallback(provider_resp, default_text="Hi! 👋")
-            self._attach_metrics_and_track(limiter, user_id, request, response, t0, branch="smalltalk")
-
-            # history
-            self.mem.history.add(user_id, "user", user_text)
-            try:
-                assistant_text = response["choices"][0]["message"]["content"]
-            except Exception:
-                assistant_text = "Hi! 👋"
-            self.mem.history.add(user_id, "assistant", assistant_text)
-
-            return response
-
-        # ---------------- GENERAL ----------------
-        try:
-            # Build short context window (helps coherence; cheap)
-            ctx = self.mem.history.window(user_id, take=8)
-            llm_messages = [
-                {"role": "system", "content": (
-                    "You are a concise, friendly assistant for a smart home energy app. "
-                    "Keep responses brief and helpful. Do not invent data."
-                )}
-            ]
-            llm_messages.extend(ctx)
-            if decision.parsed.needs_clarification and decision.parsed.clarifying_question:
-                llm_messages.append({
-                    "role": "system",
-                    "content": f"If needed, ask a single clarifying question: {decision.parsed.clarifying_question}"
-                })
-            llm_messages.append({"role": "user", "content": user_text})
-
-            provider_resp = await self.provider.chat_completion(
-                messages=llm_messages,
-                temperature=min(max(request.temperature, 0.0), 1.0),
-                max_tokens=min(max(request.max_tokens, 64), 256),
-            )
-        except Exception:
-            logger.error("LLM general call failed", exc_info=True)
-            provider_resp = {"error": "exception"}
-
-        response = self._wrap_or_fallback(
-            provider_resp,
-            default_text="Sorry, I'm having trouble right now. Please try again in a few seconds."
-        )
-        self._attach_metrics_and_track(limiter, user_id, request, response, t0, branch="general")
-
-        # history
-        self.mem.history.add(user_id, "user", user_text)
-        try:
-            assistant_text = response["choices"][0]["message"]["content"]
-        except Exception:
-            assistant_text = "Okay."
-        self.mem.history.add(user_id, "assistant", assistant_text)
-
+        self._update_chat_history(user_id, user_text, response)
+        
         return response
 
-    # ----------------- helpers -----------------
+    def _handle_follow_up(self, user_id: int, user_text: str, decision: Decision) -> Decision:
+        if is_time_only_followup(user_text):
+            last_energy_context = self.mem.followups.get_if_fresh(user_id)
+            if last_energy_context and decision.parsed.time:
+                logger.info(f"Handling follow-up for user {user_id}. Reusing last context.")
+                decision.intent = RouteIntent.ENERGY
+                if not decision.parsed.devices:
+                    decision.parsed.devices = last_energy_context.devices
+                if not decision.parsed.rank:
+                    decision.parsed.rank = last_energy_context.rank
+        return decision
 
-    def _wrap_or_fallback(self, provider_resp: Dict[str, Any], default_text: str) -> Dict[str, Any]:
-        """
-        Ensure we always return a ChatResponse-shaped dict, even if provider errored.
-        """
-        if not isinstance(provider_resp, dict) or ("error" in provider_resp):
-            return self._simple_assistant_completion(default_text)
+    async def _handle_energy_intent(
+        self, user_id: int, decision: Decision, known_devices: List[str], limiter: RateLimiter, t0: float, local_tz: str
+    ) -> Dict[str, Any]:
+        if not limiter.allow_request(user_id, 0):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
 
-        # Check minimal shape
-        if not all(k in provider_resp for k in ("id", "model", "choices", "usage")):
-            return self._simple_assistant_completion(default_text)
-
-        # Also ensure choices[0].message.content exists
         try:
-            _ = provider_resp["choices"][0]["message"]["content"]
+            energy_response = await self.energy_processor.process_with_params(
+                user_id=user_id, 
+                # --- FIX: Use asdict for dataclasses, not model_dump ---
+                parsed=asdict(decision.parsed), 
+                local_tz=local_tz
+            )
+            
+            response = self._format_energy_response(energy_response)
+            response["metrics"] = self._metrics(
+                branch="energy", start=t0, 
+                extra={"known_devices": len(known_devices), "parse_confidence": decision.confidence}
+            )
+
+            self._update_energy_memory(user_id, decision)
+            return response
         except Exception:
-            return self._simple_assistant_completion(default_text)
+            logger.exception("Energy query processing failed.")
+            response = self._simple_assistant_completion("Sorry, I couldn't retrieve your energy data right now.")
+            response["metrics"] = self._metrics(branch="energy_error", start=t0)
+            return response
 
-        return provider_resp
+    async def _handle_llm_intent(
+        self, user_id: int, request: ChatRequest, decision: Decision, known_devices: List[str], limiter: RateLimiter, t0: float
+    ) -> Dict[str, Any]:
+        if decision.intent == RouteIntent.SMALLTALK:
+            system_prompt = "You are a friendly assistant for a smart home app. Keep replies to greetings very brief."
+            context_window = 0
+            branch = "smalltalk"
+        else:
+            base_prompt = (
+                "You are a helpful assistant for a smart home energy app. "
+                "Your primary function is to answer questions based on the provided conversation context. "
+                "You MUST NOT invent, hallucinate, or make up any data, especially energy data. "
+                "If you don't know the answer or the context is empty, just say you don't have that information."
+            )
+            if known_devices:
+                device_list_str = ", ".join(known_devices)
+                system_prompt = f"{base_prompt} For context, the user owns the following devices: {device_list_str}."
+            else:
+                system_prompt = base_prompt
+            context_window = 2
+            branch = "general"
 
-    def _metrics(self, branch: str, start: float, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        ms = int(round((time.perf_counter() - start) * 1000))
-        m = {
-            "branch": branch,
-            "latency_ms": ms,
-            "provider": "together",
-            "model": getattr(self.provider, "model", None),
+        max_tokens = 150
+        temperature = 0.7
+        allocated_tokens = min(request.max_tokens, max_tokens)
+
+        if not limiter.allow_request(user_id, allocated_tokens):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+
+        llm_messages = [{"role": "system", "content": system_prompt}]
+        if context_window > 0:
+            llm_messages.extend(self.mem.history.window(user_id, take=context_window))
+        llm_messages.append({"role": "user", "content": decision.user_text})
+
+        try:
+            provider_resp = await self.provider.chat_completion(
+                messages=llm_messages, temperature=temperature, max_tokens=max_tokens,
+            )
+            response = self._wrap_or_fallback(provider_resp, "I'm not sure how to respond to that.")
+        except Exception:
+            logger.exception("LLM provider call failed.")
+            response = self._simple_assistant_completion("Sorry, I'm having trouble connecting right now.")
+        
+        self._attach_metrics_and_track(limiter, user_id, allocated_tokens, response, t0, branch)
+        return response
+
+    def _format_energy_response(self, energy_response: EnergyQueryResponse) -> Dict[str, Any]:
+        ed = energy_response.model_dump()
+        return {
+            "id": f"chatcmpl-energy-{uuid.uuid4().hex}", "object": "chat.completion",
+            "created": int(time.time()), "model": "energy-query-processor",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": ed.get("summary", "Here is your data.")}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "energy_data": ed
         }
-        if extra:
-            m.update(extra)
-        return m
+
+    def _update_energy_memory(self, user_id: int, decision: Decision):
+        self.mem.followups.set_state(
+            user_id=user_id,
+            intent="rank" if decision.parsed.rank else "usage",
+            devices=(decision.parsed.devices or []),
+            rank=decision.parsed.rank
+        )
+        time_label = decision.parsed.time.label if decision.parsed.time else "the requested period"
+        if decision.parsed.rank:
+            line = f"Looked up the {decision.parsed.rank}-consuming device for {time_label}."
+        else:
+            dev_phrase = "all devices"
+            if decision.parsed.devices:
+                dev_phrase = f"device(s): {', '.join(decision.parsed.devices)}"
+            line = f"Checked energy usage for {dev_phrase} over {time_label}."
+        self.mem.recap.add_line(user_id, line)
+
+    def _update_chat_history(self, user_id: int, user_text: str, response: Dict[str, Any]):
+        assistant_text = "..."
+        try:
+            assistant_text = response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            logger.warning("Could not extract assistant content for history tracking.")
+        
+        self.mem.history.add(user_id, "user", user_text)
+        self.mem.history.add(user_id, "assistant", assistant_text)
+        
+    def _metrics(self, branch: str, start: float, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        metrics_data = {
+            "branch": branch, "latency_ms": int(round((time.perf_counter() - start) * 1000)),
+            "provider_model": getattr(self.provider, "model", "N/A"),
+        }
+        if extra: metrics_data.update(extra)
+        return metrics_data
 
     def _attach_metrics_and_track(
-        self,
-        limiter: RateLimiter,
-        user_id: int,
-        request: ChatRequest,
-        response: Dict[str, Any],
-        start_t: float,
-        branch: str
-    ) -> None:
-        # metrics
-        try:
-            response["metrics"] = self._metrics(branch=branch, start=start_t)
-            usage = response.get("usage") or {}
-            if isinstance(usage, dict):
-                response["metrics"]["total_tokens"] = usage.get("total_tokens")
-                response["metrics"]["prompt_tokens"] = usage.get("prompt_tokens")
-                response["metrics"]["completion_tokens"] = usage.get("completion_tokens")
-        except Exception:
-            logger.debug("Failed to attach metrics", exc_info=True)
-
-        # track tokens (if present)
-        total_tokens = response.get("usage", {}).get("total_tokens")
-        if isinstance(total_tokens, int):
-            limiter.add_usage(
-                user_id,
-                actual_tokens=total_tokens,
-                allocated_tokens=request.max_tokens
+        self, limiter: RateLimiter, user_id: int, allocated_tokens: int,
+        response: Dict[str, Any], start_t: float, branch: str
+    ):
+        usage = response.get("usage", {})
+        
+        if isinstance(usage, dict) and usage.get("total_tokens") is not None:
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+            logger.info(
+                f"AI Token Usage - Branch: {branch}, "
+                f"Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}"
             )
+
+        extra_metrics = {
+            "total_tokens": usage.get("total_tokens"),
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+        }
+        response["metrics"] = self._metrics(branch=branch, start=start_t, extra=extra_metrics)
+        
+        if isinstance(usage.get("total_tokens"), int):
+            limiter.add_usage(user_id, allocated_tokens, usage["total_tokens"])
+
+    def _wrap_or_fallback(self, provider_resp: Dict[str, Any], default_text: str) -> Dict[str, Any]:
+        try:
+            if isinstance(provider_resp, dict) and provider_resp.get("choices"):
+                _ = provider_resp["choices"][0]["message"]["content"]
+                return provider_resp
+        except (KeyError, IndexError, TypeError): pass
+        logger.warning(f"Provider response was invalid or errored. Using fallback. Response: {provider_resp}")
+        return self._simple_assistant_completion(default_text)
 
     def _simple_assistant_completion(self, text: str) -> Dict[str, Any]:
         return {
-            "id": f"chatcmpl-{uuid.uuid4().hex}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": "fallback",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop"
-            }],
+            "id": f"chatcmpl-fallback-{uuid.uuid4().hex}", "object": "chat.completion",
+            "created": int(time.time()), "model": "fallback-generator",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
-
-    def _simple_assistant_reply(self, text: str) -> Dict[str, Any]:
-        return self._simple_assistant_completion(text)
 
     async def close(self) -> None:
         await self.provider.close()
