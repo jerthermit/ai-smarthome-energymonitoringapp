@@ -8,8 +8,10 @@ const SUGGESTIONS = [
   "Show my usage trend this month."
 ];
 
-export const ChatInterface = () => {
-  const { messages, isLoading, error, submitMessage } = useChat();
+// Define the component's props
+type ChatInterfaceProps = ReturnType<typeof useChat>;
+
+export const ChatInterface = ({ messages, isLoading, error, submitMessage }: ChatInterfaceProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [suggestionIdx, setSuggestionIdx] = useState(0);
 
@@ -26,7 +28,11 @@ export const ChatInterface = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const handleSubmit = (msg: string) => submitMessage(msg);
+  const handleSubmit = (msg: string) => {
+    if (submitMessage) {
+      submitMessage(msg);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
