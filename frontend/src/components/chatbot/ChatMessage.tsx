@@ -9,6 +9,20 @@ interface ChatMessageProps {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
 
+  // Helper function to convert **bold** markdown to <strong>bold</strong> HTML
+  // This function also sanitizes the text to prevent XSS vulnerabilities
+  const renderWithBold = (text: string) => {
+    // Escape basic HTML characters to prevent XSS
+    const sanitizedText = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    
+    // Replace markdown bold with strong tags
+    const htmlText = sanitizedText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    return { __html: htmlText };
+  };
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-2`}>
       <div className={`flex items-end gap-2 max-w-[75%] ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -30,9 +44,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             } rounded-2xl ${isUser ? 'rounded-br-none' : 'rounded-bl-none'}`}
           >
             {message.content.split('\n').map((line, idx) => (
-              <p key={idx} className="mb-1.5 last:mb-0 break-words">
-                {line}
-              </p>
+              <p 
+                key={idx} 
+                className="mb-1.5 last:mb-0 break-words"
+                dangerouslySetInnerHTML={renderWithBold(line || '')} // Add fallback for empty lines
+              />
             ))}
           </div>
           {message.timestamp && (
