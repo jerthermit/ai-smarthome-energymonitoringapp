@@ -19,6 +19,16 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional, Tuple
 
+# Required for type hinting FollowUpState.time_context
+from app.ai.orchestrator import TimeRangeParams 
+
+
+# NEW: Data structure for a ranked device in memory
+@dataclass
+class RankedDevice:
+    device_id: str
+    kwh: float
+    name: Optional[str] = None # Added name for easier use
 
 # -------------------------- Follow-up state --------------------------
 
@@ -28,6 +38,10 @@ class FollowUpState:
     intent: str                          # "usage" | "rank" | etc.
     devices: List[str] = field(default_factory=list)
     rank: Optional[str] = None           # "highest" | "lowest" | None
+    rank_num: Optional[int] = None       # Added rank_num to FollowUpState
+    # NEW: Store the list of ranked devices
+    ranked_devices: List[RankedDevice] = field(default_factory=list)
+    time_context: Optional[TimeRangeParams] = None # CHANGED: Renamed 'time' to 'time_context'
 
 
 class FollowUpMemory:
@@ -40,12 +54,24 @@ class FollowUpMemory:
         self.ttl = max(5, int(ttl_seconds))
         self._store: Dict[int, FollowUpState] = {}
 
-    def set_state(self, user_id: int, intent: str, devices: List[str], rank: Optional[str]) -> None:
+    def set_state(
+        self,
+        user_id: int,
+        intent: str,
+        devices: List[str],
+        rank: Optional[str],
+        rank_num: Optional[int], # Added rank_num parameter
+        ranked_devices: Optional[List[RankedDevice]] = None,
+        time_context: Optional[TimeRangeParams] = None 
+    ) -> None:
         self._store[user_id] = FollowUpState(
-            ts=time.time(),
+            ts=time.time(), 
             intent=intent,
             devices=list(devices or []),
-            rank=rank
+            rank=rank,
+            rank_num=rank_num,
+            ranked_devices=list(ranked_devices or []), # Ensure a copy is stored
+            time_context=time_context 
         )
 
     def get_if_fresh(self, user_id: int) -> Optional[FollowUpState]:
