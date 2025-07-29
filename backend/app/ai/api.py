@@ -1,117 +1,93 @@
+# backend/app/ai/api.py
 """
 API endpoints for the Conversational AI Service.
 Handles chat interactions with the AI model.
 """
 import logging
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Dict, Any, Optional
-
 from sqlalchemy.orm import Session
-from app.core.database import get_db
+from sqlalchemy import text
+
 from app.auth.dependencies import get_current_user
 from app.auth.models import User
-from .service import AIService
+from app.core.database import get_db
 from .chat_schemas import ChatRequest, ChatResponse, ErrorResponse
-from app.core.config import settings
+from .service import AIService
 
-router = APIRouter(prefix="/ai", tags=["AI"])
-
+# Setup router
+router = APIRouter(prefix="/ai", tags=["AI Conversation Engine"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
     "/chat",
     response_model=ChatResponse,
+    summary="Main conversational endpoint",
     responses={
-        200: {"model": ChatResponse},
-        400: {"model": ErrorResponse},
-        500: {"model": ErrorResponse}
-    }
+        200: {"description": "Successful response from the AI.", "model": ChatResponse},
+        429: {"description": "Rate limit exceeded.", "model": ErrorResponse},
+        500: {"description": "Internal server error.", "model": ErrorResponse},
+    },
 )
 async def chat_endpoint(
     request: ChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Handle chat requests and return AI responses.
-    
-    For energy-related queries, returns a structured JSON response with:
-    - summary: Natural language summary
-    - data: Structured information
-    - time_series: Optional time-series data
-    
-    Parameters:
-    - messages: List of messages in the conversation
-    - temperature: Controls randomness (0.0 to 1.0)
-    - max_tokens: Maximum number of tokens to generate
+    Handles chat requests and returns an AI-generated response.
+
+    This single endpoint orchestrates the entire AI response flow:
+    - **Interprets Intent**: Determines if the query is about energy, small talk, or general questions.
+    - **Fetches Data**: If energy-related, it queries the database for usage data.
+    - **Generates Response**: Provides a natural language summary and optional structured data.
     """
     try:
+        # Initialize the service with a request-scoped database session
         ai_service = AIService(db_session=db)
-        response = await ai_service.chat(
-            user_id=current_user.id,
-            request=request
-        )
         
-        # If this is an energy query response, include the raw data
-        if hasattr(response, 'get') and 'energy_data' in response:
-            return {
-                **response,
-                'energy_data': response['energy_data']
-            }
-            
+        # The main service call that handles all logic
+        response = await ai_service.chat(user_id=current_user.id, request=request)
+        
+        # FastAPI will automatically format the response based on the response_model
         return response
-        
-        # Re-raise HTTP exceptions as-is
+
+    except HTTPException:
+        # Re-raise HTTPException directly, so FastAPI can handle it (e.g., for 429 rate limit)
         raise
-        
     except Exception as e:
-        # Log the full error for debugging
-        logger = logging.getLogger(__name__)
-        logger.exception("Unexpected error in chat endpoint")
-        
-        # Return a generic error to the client
+        # Catch any other unexpected errors, log them, and return a generic 500
+        logger.exception(f"Unexpected error in chat endpoint for user {current_user.id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": "An unexpected error occurred while processing your request"}
+            detail="An unexpected error occurred while processing your request.",
         )
+
 
 @router.get(
     "/health",
+    summary="Service Health Check",
+    response_model=Dict[str, str],
     responses={
-        200: {"description": "Service is healthy"},
-        503: {"model": ErrorResponse}
-    }
+        200: {"description": "Service is healthy and database is reachable."},
+        503: {"description": "Service is unavailable or cannot reach the database.", "model": ErrorResponse},
+    },
 )
 async def health_check(db: Session = Depends(get_db)):
     """
-    Health check endpoint to verify the service is running and can communicate
-    with the AI provider.
+    Verifies that the API is running and can connect to the database.
+
+    This is a lightweight check and does **not** test connectivity to the
+    external AI provider.
     """
     try:
-        ai_service = AIService(db_session=db)
-        # Test the AI service with a simple prompt
-        response = await ai_service.chat(
-            user_id=1, # Use a dummy user for health check
-            request=ChatRequest(messages=[{"role": "user", "content": "Hello"}])
-        )
-        
-        if "error" in response:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"error": f"AI service error: {response['error']}"}
-            )
-            
+        # A simple, fast query to ensure the database connection is alive.
+        db.execute(text("SELECT 1"))
         return {"status": "healthy"}
-        
-    except HTTPException:
-        raise
-        
     except Exception as e:
-        logger = logging.getLogger(__name__)
-        logger.exception("Health check failed")
+        logger.error(f"Health check failed: Database connection error. {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": f"Service unavailable: {str(e)}"}
+            detail="Service is unhealthy: could not connect to the database.",
         )
-
-# Add router to FastAPI app in main.py
