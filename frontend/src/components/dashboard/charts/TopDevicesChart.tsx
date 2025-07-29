@@ -19,12 +19,13 @@ import {
   type ChartComponentProps,
   chartConfig
 } from './chart-config';
+import type { TopDevice } from '../../../types/dashboard'; // CHANGED: Import TopDevice type from types/dashboard
 
 // Register only the necessary ChartJS components
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 interface TopDevicesChartProps extends Omit<ChartComponentProps, 'children'> {
-  data: Array<{ deviceId: string; totalEnergy: number; name?: string }>;
+  data: TopDevice[]; // Use the imported TopDevice type
   isLoading: boolean;
   error: Error | null;
   maxItems?: number;
