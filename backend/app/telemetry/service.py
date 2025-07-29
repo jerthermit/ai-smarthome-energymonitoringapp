@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -84,6 +85,68 @@ def get_device(db: Session, device_id: str, user_id: int) -> Optional[models.Dev
     )
 
 
+# ----------------------------- Centralized windowing -----------------------------
+
+LogicalRange = Literal["day", "3days", "week"]  # canonical values used by frontend
+
+def _compute_local_window(range_key: LogicalRange, tz: str) -> Dict[str, Any]:
+    """
+    Compute [start_local, end_local) and UTC equivalents for canonical ranges.
+
+    - 'day'   => [today 00:00, now)                (hourly granularity)
+    - '3days' => [today 00:00 - 3d, today 00:00)   (daily granularity; exclude today)
+    - 'week'  => [today 00:00 - 7d, today 00:00)   (daily granularity; exclude today)
+
+    Returns:
+      {
+        "start_utc": datetime,
+        "end_utc": datetime,
+        "granularity": "hour" | "day",
+        "bucket": "1 hour" | "1 day",
+        "tz": tz
+      }
+    """
+    zone = ZoneInfo(tz)
+    now_local = datetime.now(zone)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if range_key == "day":
+        start_local = today_start_local
+        end_local = now_local
+        granularity = "hour"
+        bucket = "1 hour"
+    elif range_key == "3days":
+        start_local = today_start_local - timedelta(days=3)
+        end_local = today_start_local  # exclude today
+        granularity = "day"
+        bucket = "1 day"
+    elif range_key == "week":
+        start_local = today_start_local - timedelta(days=7)
+        end_local = today_start_local  # exclude today
+        granularity = "day"
+        bucket = "1 day"
+    else:
+        # fallback: day
+        start_local = today_start_local
+        end_local = now_local
+        granularity = "hour"
+        bucket = "1 hour"
+
+    # Convert to UTC for filtering
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
+    return {
+        "start_utc": start_utc,
+        "end_utc": end_utc,
+        "granularity": granularity,
+        "bucket": bucket,
+        "tz": tz,
+    }
+
+
+# ----------------------------- Aggregations (legacy) -----------------------------
+
 def get_aggregate_telemetry(
     db: Session,
     query: schemas.AggregateQuery,
@@ -92,14 +155,9 @@ def get_aggregate_telemetry(
     """
     Get aggregated telemetry data for visualization (energy, not raw watts).
 
-    Integrates instantaneous power (W) over time to compute energy (Wh),
-    using TimescaleDB window functions + time_bucket, then aggregates to
-    the requested resolution.
-
-    Returns a list of buckets with:
-      - timestamp: bucket start (UTC, tz-aware)
-      - value: total energy in Wh (schema enforces > 0)
-      - device_count: number of active devices in the bucket
+    NOTE: This is the existing implementation that uses a moving window based on
+    query.time_range and groups in UTC. It is preserved for backward compatibility.
+    Prefer the *windowed* versions below for canonical range semantics.
     """
     # ---- Determine window from TimeRange enum ----
     now = datetime.now(timezone.utc)
@@ -183,7 +241,6 @@ def get_aggregate_telemetry(
 
     rows = db.execute(text(sql), params).fetchall()
 
-    # ---- Map to response objects (skip zero buckets to satisfy value > 0) ----
     out: List[schemas.AggregateDataPoint] = []
     for r in rows:
         e_wh = float(r.energy_wh or 0.0)
@@ -199,6 +256,117 @@ def get_aggregate_telemetry(
 
     return out
 
+
+# ------------------------ Aggregations (canonical windowed) ------------------------
+
+def get_aggregate_telemetry_windowed(
+    db: Session,
+    *,
+    user_id: int,
+    range_key: LogicalRange,
+    tz: str = "Asia/Singapore",
+    device_ids: Optional[List[str]] = None,
+) -> List[schemas.AggregateDataPoint]:
+    """
+    Canonical aggregation aligned to local calendar days in `tz`.
+
+    - 'day'   => hourly buckets from local midnight to now (today only)
+    - '3days' => daily buckets for last 3 full days ending yesterday (exclude today)
+    - 'week'  => daily buckets for last 7 full days ending yesterday (exclude today)
+
+    Bucketing is performed on local time in SQL (via timezone(:tz, timestamp))
+    and then converted back to UTC for output. Missing buckets are omitted (0),
+    which the frontend can render as 0s if needed.
+    """
+    win = _compute_local_window(range_key, tz)
+    start_utc: datetime = win["start_utc"]
+    end_utc: datetime = win["end_utc"]
+    granularity: str = win["granularity"]  # 'hour'|'day'
+
+    # ---- Optional device filter ----
+    device_filter_sql = ""
+    params: Dict[str, Any] = {
+        "user_id": user_id,
+        "start_time": start_utc,
+        "end_time": end_utc,
+        "max_gap_seconds": DEFAULT_MAX_GAP_SECONDS,
+        "tz": tz,
+    }
+    if device_ids:
+        device_filter_sql = " AND t.device_id = ANY(:device_ids) "
+        params["device_ids"] = device_ids
+
+    # Choose bucket expression in LOCAL time
+    if granularity == "hour":
+        bucket_expr = "date_trunc('hour', timezone(:tz, timestamp))"
+    else:
+        bucket_expr = "date_trunc('day', timezone(:tz, timestamp))"
+
+    sql = f"""
+    WITH filtered AS (
+        SELECT
+            t.device_id,
+            t.timestamp,
+            t.energy_watts AS power_w,
+            LAG(t.timestamp) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_ts,
+            LAG(t.energy_watts) OVER (PARTITION BY t.device_id ORDER BY t.timestamp) AS prev_w
+        FROM telemetry t
+        JOIN devices d ON d.id = t.device_id
+        WHERE d.user_id = :user_id
+          AND t.timestamp >= :start_time
+          AND t.timestamp <  :end_time
+          {device_filter_sql}
+    ),
+    intervals AS (
+        SELECT
+            device_id,
+            timestamp,
+            COALESCE(prev_w, power_w) AS power_w_for_interval,
+            EXTRACT(EPOCH FROM (timestamp - prev_ts)) AS delta_s
+        FROM filtered
+    ),
+    intervals_capped AS (
+        SELECT
+            device_id,
+            timestamp,
+            power_w_for_interval,
+            GREATEST(0, LEAST(:max_gap_seconds, COALESCE(delta_s, 0))) AS delta_s
+        FROM intervals
+    ),
+    per_bucket AS (
+        SELECT
+            {bucket_expr} AS bucket_local,           -- TIMESTAMP (local time)
+            SUM(power_w_for_interval * delta_s / 3600.0) AS energy_wh,
+            COUNT(DISTINCT device_id) AS device_count
+        FROM intervals_capped
+        GROUP BY bucket_local
+    )
+    SELECT
+        (bucket_local AT TIME ZONE :tz) AS bucket_utc,  -- convert local back to timestamptz (UTC)
+        energy_wh,
+        device_count
+    FROM per_bucket
+    ORDER BY bucket_utc;
+    """
+
+    rows = db.execute(text(sql), params).fetchall()
+
+    out: List[schemas.AggregateDataPoint] = []
+    for r in rows:
+        e_wh = float(r.energy_wh or 0.0)
+        if e_wh < 0:
+            continue
+        out.append(
+            schemas.AggregateDataPoint(
+                timestamp=r.bucket_utc,  # timestamptz (UTC)
+                value=e_wh,
+                device_count=int(r.device_count or 0),
+            )
+        )
+    return out
+
+
+# ------------------------ Energy summary (canonical windowed) ------------------------
 
 def get_device_energy_summary(
     db: Session,
@@ -241,7 +409,7 @@ def get_device_energy_summary(
         JOIN devices d ON d.id = t.device_id
         WHERE d.user_id = :user_id
           AND t.timestamp >= :start_time
-          AND t.timestamp <= :end_time
+          AND t.timestamp <  :end_time
           {device_filter_sql}
     ),
     intervals AS (
@@ -286,3 +454,24 @@ def get_device_energy_summary(
             )
         )
     return out
+
+
+def get_device_energy_summary_windowed(
+    db: Session,
+    *,
+    user_id: int,
+    range_key: LogicalRange,
+    tz: str = "Asia/Singapore",
+    device_ids: Optional[List[str]] = None,
+) -> List[schemas.DeviceEnergySummary]:
+    """
+    Canonical per-device totals using the same local-window semantics as charts.
+    """
+    win = _compute_local_window(range_key, tz)
+    return get_device_energy_summary(
+        db,
+        start_time=win["start_utc"],
+        end_time=win["end_utc"],
+        user_id=user_id,
+        device_ids=device_ids,
+    )
