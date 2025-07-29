@@ -7,14 +7,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-# --- ADD THIS BLOCK ---
-# Configure logging to show INFO level messages
+# --- MODIFIED THIS BLOCK ---
+# Configure logging to show DEBUG level messages from all modules, especially app.ai
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG, # Changed to DEBUG
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-# --- END OF BLOCK ---
+
+# Explicitly set log level for app.ai modules to DEBUG to ensure visibility
+logging.getLogger("app.ai.orchestrator").setLevel(logging.DEBUG)
+logging.getLogger("app.ai.service").setLevel(logging.DEBUG)
+logging.getLogger("app.ai.energy_service").setLevel(logging.DEBUG)
+# --- END OF MODIFIED BLOCK ---
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / '.env'
