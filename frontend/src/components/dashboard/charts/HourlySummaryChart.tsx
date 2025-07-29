@@ -1,3 +1,5 @@
+// frontend/src/components/dashboard/charts/HourlySummaryChart.tsx
+
 import React from 'react';
 import { Chart } from 'react-chartjs-2';
 import type { ChartData, ChartOptions } from 'chart.js';
@@ -29,7 +31,7 @@ ChartJS.register(
 
 interface HourlyDataPoint {
   hour: number;
-  averageEnergy: number;
+  averageEnergy: number; // kWh for that hour, 2dp from the hook
 }
 
 interface HourlySummaryChartProps {
@@ -52,15 +54,19 @@ type ChartDataType = Omit<ChartData<'bar' | 'line', number[], string>, 'datasets
 
 const processHourlyData = (data: HourlyDataPoint[], currentHour: number): ChartDataType => {
   const hours = Array.from({ length: currentHour + 1 }, (_, i) => i);
+
   const processedData = hours.map(hour => {
     const dataPoint = data.find(d => d.hour === hour);
+    // data from hook is already 2dp; keep it stable
     return dataPoint ? dataPoint.averageEnergy : 0;
   });
 
   const validDataPoints = data.filter(d => d.hour <= currentHour);
-  const average = validDataPoints.length > 0
-    ? validDataPoints.reduce((acc, curr) => acc + curr.averageEnergy, 0) / validDataPoints.length
-    : 0;
+  const avgRaw =
+    validDataPoints.length > 0
+      ? validDataPoints.reduce((acc, curr) => acc + curr.averageEnergy, 0) / validDataPoints.length
+      : 0;
+  const average = Number(avgRaw.toFixed(2)); // force 2dp for consistency
 
   return {
     labels: hours.map(h => h.toString()),
@@ -169,7 +175,7 @@ const chartOptions = (maxHour: number): ChartOptions<'bar' | 'line'> => ({
       },
       ticks: {
         ...(defaultChartOptions.scales?.y as any)?.ticks,
-        callback: (value: number): string => `${value} kWh`,
+        callback: (value: number): string => `${Number(value).toFixed(2)} kWh`, // force 2dp
       },
     },
   },
