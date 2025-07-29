@@ -7,6 +7,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
+# --- ADD THIS BLOCK ---
+# Configure logging to show INFO level messages
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# --- END OF BLOCK ---
+
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -16,7 +25,7 @@ from app.core.database import engine, Base
 from app.auth.api import router as auth_router
 from app.telemetry.api import router as telemetry_router
 from app.ai.api import router as ai_router
-from app.websocket import router as websocket_router  # This is the final, correct import
+from app.websocket import router as websocket_router
 from app.simulation_service import run_simulation
 
 # Create database tables
@@ -28,17 +37,17 @@ async def lifespan(app: FastAPI):
     Manages the application's lifespan events.
     Starts the simulation task on startup and cancels it on shutdown.
     """
-    print("Application startup: Starting background simulation task...")
+    logging.info("Application startup: Starting background simulation task...")
     simulation_task = asyncio.create_task(run_simulation())
     
     yield  # The application is running during this yield
     
-    print("Application shutdown: Stopping simulation task...")
+    logging.info("Application shutdown: Stopping simulation task...")
     simulation_task.cancel()
     try:
         await simulation_task
     except asyncio.CancelledError:
-        print("Simulation task cancelled successfully.")
+        logging.info("Simulation task cancelled successfully.")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
