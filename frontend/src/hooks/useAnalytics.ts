@@ -2,21 +2,19 @@
 
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
+// Import types from the centralized dashboard types file
+import type { TimeRange, AggregatePoint, HourlyPoint, TopDevice } from '../types/dashboard';
 
-export type TimeRange = 'day' | '3days' | 'week';
-
+// EnergySummaryRow remains here as it's specific to the backend telemetry summary response
 type EnergySummaryRow = {
   deviceId: string;   // from backend alias
   energyKwh: number;  // kWh over canonical window
 };
 
-type AggregatePoint = {
-  timestamp: string;  // ISO8601 UTC (bucket start)
-  value: number;      // Wh in the bucket
-};
-
-type TopDevice = { deviceId: string; totalEnergy: number; name?: string }; // totalEnergy in kWh
-type HourlyPoint = { hour: number; averageEnergy: number }; // kWh per local hour (name kept for compatibility)
+// Removed:
+// export type HourlyPoint = { hour: number; averageEnergy: number };
+// export type TopDevice = { deviceId: string; totalEnergy: number; name?: string };
+// type AggregatePoint = { ... }; // also removed, now imported
 
 /* ---------------- Canonical, backend-driven windows ----------------
    - day   => [today 00:00, now) hourly (60m)
