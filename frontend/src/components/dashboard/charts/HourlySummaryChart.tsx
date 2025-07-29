@@ -16,6 +16,7 @@ import {
 } from 'chart.js';
 import { Skeleton } from '../../ui/skeleton';
 import { defaultChartOptions, defaultLineDataset, defaultBarDataset, chartConfig } from './chart-config';
+import type { HourlyPoint } from '../../../types/dashboard'; // CHANGED: Import HourlyPoint from types/dashboard
 
 // Register ChartJS components
 ChartJS.register(
@@ -29,13 +30,8 @@ ChartJS.register(
   Legend
 );
 
-interface HourlyDataPoint {
-  hour: number;
-  averageEnergy: number; // kWh for that hour, 2dp from the hook
-}
-
 interface HourlySummaryChartProps {
-  data: HourlyDataPoint[];
+  data: HourlyPoint[]; // Use the imported HourlyPoint type
   isLoading: boolean;
   error: Error | null;
   currentHour?: number; // Current hour (0-23)
@@ -52,12 +48,12 @@ type ChartDataType = Omit<ChartData<'bar' | 'line', number[], string>, 'datasets
   datasets: ChartDatasetType[];
 };
 
-const processHourlyData = (data: HourlyDataPoint[], currentHour: number): ChartDataType => {
+const processHourlyData = (data: HourlyPoint[], currentHour: number): ChartDataType => {
   const hours = Array.from({ length: currentHour + 1 }, (_, i) => i);
 
   const processedData = hours.map(hour => {
+    // Ensure we are accessing 'averageEnergy' from the HourlyPoint structure
     const dataPoint = data.find(d => d.hour === hour);
-    // data from hook is already 2dp; keep it stable
     return dataPoint ? dataPoint.averageEnergy : 0;
   });
 
