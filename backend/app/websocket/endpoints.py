@@ -1,10 +1,13 @@
-from fastapi import WebSocket, WebSocketDisconnect
-from .manager import manager
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import json
 import logging
+from .manager import manager
 
+# Create a router, which main.py will import
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
+@router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """Handle WebSocket connections and messages."""
     client_id = None
@@ -22,50 +25,37 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # Handle incoming messages
         while True:
-            try:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                
-                # Handle different message types
-                if message.get('type') == 'subscribe':
-                    channel = message.get('channel')
-                    if channel:
-                        await manager.subscribe(client_id, channel)
-                        await websocket.send_json({
-                            'type': 'subscription_confirmation',
-                            'channel': channel,
-                            'status': 'subscribed'
-                        })
-                
-                elif message.get('type') == 'unsubscribe':
-                    channel = message.get('channel')
-                    if channel:
-                        await manager.unsubscribe(client_id, channel)
-                        await websocket.send_json({
-                            'type': 'unsubscription_confirmation',
-                            'channel': channel,
-                            'status': 'unsubscribed'
-                        })
-                
-                elif message.get('type') == 'ping':
-                    await websocket.send_json({'type': 'pong'})
-                
-            except json.JSONDecodeError:
-                await websocket.send_json({
-                    'type': 'error',
-                    'message': 'Invalid JSON format'
-                })
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                await websocket.send_json({
-                    'type': 'error',
-                    'message': 'Error processing message'
-                })
-                
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            # Handle different message types
+            if message.get('type') == 'subscribe':
+                channel = message.get('channel')
+                if channel:
+                    await manager.subscribe(client_id, channel)
+                    await websocket.send_json({
+                        'type': 'subscription_confirmation',
+                        'channel': channel,
+                        'status': 'subscribed'
+                    })
+            
+            elif message.get('type') == 'unsubscribe':
+                channel = message.get('channel')
+                if channel:
+                    await manager.unsubscribe(client_id, channel)
+                    await websocket.send_json({
+                        'type': 'unsubscription_confirmation',
+                        'channel': channel,
+                        'status': 'unsubscribed'
+                    })
+            
+            elif message.get('type') == 'ping':
+                await websocket.send_json({'type': 'pong'})
+
     except WebSocketDisconnect:
         logger.info(f"Client disconnected: {client_id}")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error for client {client_id}: {e}")
     finally:
         if client_id:
             manager.disconnect(client_id)
