@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+// frontend/src/components/dashboard/sections/AggregateConsumptionSection.tsx
+
+import React, { useEffect, useRef, useState } from 'react';
 import { Zap, Layers } from 'lucide-react';
 import { Skeleton } from '../../ui/skeleton';
 import { Button } from '../../ui/button';
@@ -33,6 +35,7 @@ const RANGE_LABEL: Record<TimeRange, string> = {
   week: 'Last 7 Days',
 };
 
+/* ---------------- Animated counter ---------------- */
 const useAnimatedCounter = (target: string, duration: number = 800) => {
   const [displayValue, setDisplayValue] = useState('0.00');
   const animationRef = useRef<number | null>(null);
@@ -70,28 +73,26 @@ const useAnimatedCounter = (target: string, duration: number = 800) => {
   return displayValue;
 };
 
-const formatNumber = (num: number, decimals: number = 2): string =>
-  num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+const formatNumber = (num: number): string =>
+  num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function computeWindow(nowLocal = new Date(), range: TimeRange) {
-  const end = new Date(nowLocal);
-  const start = new Date(end);
-  switch (range) {
-    case 'day': start.setDate(end.getDate() - 1); break;
-    case '3days': start.setDate(end.getDate() - 3); break;
-    case 'week': start.setDate(end.getDate() - 7); break;
-  }
-  return { start, end };
-}
+/* ---- Totals via canonical backend range (matches DeviceEnergyChart semantics) ---- */
+const getClientTimeZone = () =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Singapore';
 
-async function fetchSingleDeviceKwh(range: TimeRange, deviceId: string): Promise<number> {
-  const { start, end } = computeWindow(new Date(), range);
-  const params = { start_time: start.toISOString(), end_time: end.toISOString(), device_ids: deviceId };
+async function fetchTotalKwh(range: TimeRange, deviceId?: string): Promise<number> {
+  const tz = getClientTimeZone();
+  const params: Record<string, string> = {
+    range,               // 'day' | '3days' | 'week'
+    tz,                  // align server bucketing to the browser's local zone
+    ...(deviceId ? { device_ids: deviceId } : {}),
+  };
   const { data } = await api.get<EnergySummaryRow[]>('/telemetry/energy_summary', { params });
-  const kwh = data?.[0]?.energyKwh ?? 0;
-  return Number(kwh.toFixed(2));
+  const total = (data ?? []).reduce((sum, row) => sum + (row.energyKwh ?? 0), 0);
+  return Number(total.toFixed(2));
 }
 
+/* ------------------------- Component ------------------------- */
 const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = ({
   timeRange = 'day',
   deviceIds,
@@ -104,39 +105,25 @@ const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = 
 }) => {
   const deviceId = deviceIds && deviceIds.length > 0 ? deviceIds[0] : undefined;
 
-  const {
-    data: analytics = { topDevices: [], hourlyData: [], totalKwh: 0 },
-    isLoading: isAnalyticsLoading,
-    error: analyticsError,
-  } = useAnalytics(timeRange);
+  // Keep analytics hook wired (used elsewhere), but don't rely on its totals here.
+  useAnalytics(timeRange);
 
-  const [singleDeviceKwh, setSingleDeviceKwh] = useState<number>(0);
-  const [isSingleLoading, setIsSingleLoading] = useState<boolean>(false);
-  const [singleError, setSingleError] = useState<string | null>(null);
+  const [totalKwh, setTotalKwh] = useState<number>(0);
+  const [isTotalLoading, setIsTotalLoading] = useState<boolean>(true);
+  const [totalError, setTotalError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (!deviceId) {
-      setSingleDeviceKwh(0);
-      setIsSingleLoading(false);
-      setSingleError(null);
-      return;
-    }
-    setIsSingleLoading(true);
-    setSingleError(null);
-    fetchSingleDeviceKwh(timeRange, deviceId)
-      .then(kwh => !cancelled && setSingleDeviceKwh(kwh))
-      .catch(e => !cancelled && setSingleError(e.message || 'Failed to load device energy'))
-      .finally(() => !cancelled && setIsSingleLoading(false));
+    setIsTotalLoading(true);
+    setTotalError(null);
+    fetchTotalKwh(timeRange, deviceId)
+      .then((kwh) => { if (!cancelled) setTotalKwh(kwh); })
+      .catch((e) => { if (!cancelled) setTotalError(e?.message ?? 'Failed to load total energy'); })
+      .finally(() => { if (!cancelled) setIsTotalLoading(false); });
     return () => { cancelled = true; };
-  }, [deviceId, timeRange]);
+  }, [timeRange, deviceId]);
 
-  const isSingleDevice = Boolean(deviceId);
-
-  const totalEnergyKwh = useMemo(() => isSingleDevice ? singleDeviceKwh : analytics.totalKwh, [isSingleDevice, analytics.totalKwh, singleDeviceKwh]);
-  const animatedValue = useAnimatedCounter(totalEnergyKwh.toFixed(2), 800);
-  const loading = isSingleDevice ? isSingleLoading : isAnalyticsLoading;
-  const error = isSingleDevice ? (singleError ? new Error(singleError) : null) : analyticsError;
+  const animatedValue = useAnimatedCounter(totalKwh.toFixed(2), 800);
 
   return (
     <div className={`bg-card rounded-lg border p-4 shadow-sm hover:shadow-md transition-shadow duration-200 ${className}`}>
@@ -169,14 +156,14 @@ const AggregateConsumptionSection: React.FC<AggregateConsumptionSectionProps> = 
       </div>
 
       <div className="flex flex-col items-start">
-        {loading ? (
+        {isTotalLoading ? (
           <Skeleton className="h-12 w-32" />
-        ) : error ? (
+        ) : totalError ? (
           <div className="text-destructive text-sm">Error loading data</div>
         ) : (
           <>
             <div className="text-3xl font-bold text-foreground">
-              {formatNumber(parseFloat(animatedValue), 2)}
+              {formatNumber(parseFloat(animatedValue))}
               <span className="text-base text-muted-foreground ml-1">kWh</span>
             </div>
             <div className="text-sm text-muted-foreground mt-1">
