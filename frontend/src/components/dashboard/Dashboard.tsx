@@ -22,8 +22,9 @@ const Dashboard: React.FC = () => {
     selectedDeviceId,
     setSelectedDeviceId,
     devices,
-    analyticsData,
-    devicesWithNames,
+    analyticsData, // Keep analyticsData for totalKwh and other potential uses
+    topDevicesWithNames, // CHANGED: Destructure the new name
+    hourlyEnergyConsumption, // NEW: Destructure the new hourly data name
     selectedDevice,
     isLoading,
     error,
@@ -58,7 +59,7 @@ const Dashboard: React.FC = () => {
           {/* Hourly (kWh) summary */}
           <div className="col-span-1">
             <HourlySummarySection
-              data={analyticsData.hourlyData}
+              data={hourlyEnergyConsumption} // CHANGED: Use the new hourlyEnergyConsumption
               isLoading={isLoading}
               error={error}
             />
@@ -94,7 +95,7 @@ const Dashboard: React.FC = () => {
             {/* Left: Top Energy Consumers */}
             <div className="col-span-1 h-full">
               <TopConsumersSection
-                data={devicesWithNames}
+                data={topDevicesWithNames} // CHANGED: Pass the new topDevicesWithNames
                 isLoading={isLoading}
                 timeRange={timeRange}
                 error={error}
