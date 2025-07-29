@@ -1,3 +1,5 @@
+// frontend/src/components/dashboard/charts/DeviceEnergyChart.tsx
+
 import React, { useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
@@ -19,7 +21,6 @@ import { chartConfig } from './chart-config';
 import api from '../../../services/api';
 import type { TimeRange } from '../../../types/dashboard';
 
-// Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -37,6 +38,8 @@ type AggregatePoint = {
   device_count: number;
 };
 
+type Granularity = 'hour' | 'day';
+
 interface DeviceEnergyChartProps {
   deviceId: string | 'all';
   timeRange: TimeRange; // 'day' | '3days' | 'week'
@@ -46,50 +49,56 @@ interface DeviceEnergyChartProps {
 }
 
 /* ---------------- Helpers ---------------- */
-const MS_HOUR = 3_600_000;
 const MS_DAY = 86_400_000;
+
+const getClientTimeZone = () =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Singapore';
+
 const toLocalDate = (iso: string) => new Date(iso);
-const fmtHour = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
-const fmtDay = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' });
 
-// Determine cutoff and granularity (calendar-aligned for multi-day ranges)
-function paramsForRange(range: TimeRange) {
-  if (range === 'day') {
-    return {
-      time_range: 'day' as const,
-      resolution_minutes: 60,
-      cutoffMs: Date.now() - 24 * MS_HOUR,
-      granularity: 'hour' as const,
-    };
-  }
-  // Align multi-day to calendar days
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const days = range === '3days' ? 3 : 7;
-  const cutoff = new Date(startOfToday);
-  cutoff.setDate(cutoff.getDate() - (days - 1));
-  return {
-    time_range: 'week' as const,
-    resolution_minutes: 1440,
-    cutoffMs: cutoff.getTime(),
-    granularity: 'day' as const,
+const startOfLocalDay = (d = new Date()) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+
+const localDayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const localDayKeyFromISO = (iso: string) => localDayKey(toLocalDate(iso));
+
+const fmtHour = (d: Date) =>
+  d.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
+
+const fmtDay = (d: Date) =>
+  d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' });
+
+/* ---------------- Data fetching (canonical backend ranges) ---------------- */
+async function fetchEnergySeries(
+  deviceId: string | 'all',
+  range: TimeRange
+): Promise<{ points: AggregatePoint[]; granularity: Granularity }> {
+  // Ask backend to apply the canonical windowing & timezone alignment.
+  const tz = getClientTimeZone();
+  const params: Record<string, string> = {
+    range, // 'day' | '3days' | 'week'
+    tz,
+    ...(deviceId !== 'all' ? { device_ids: deviceId } : {}),
   };
-}
 
-// Fetch aggregate series and filter by cutoff
-async function fetchEnergySeries(deviceId: string | 'all', range: TimeRange) {
-  const { time_range, resolution_minutes, cutoffMs, granularity } = paramsForRange(range);
-  const params: Record<string, any> = { time_range, resolution_minutes };
-  if (deviceId !== 'all') params.device_ids = deviceId;
   const { data } = await api.get<AggregatePoint[]>('/telemetry/aggregate', { params });
-  const points = (data ?? []).filter(pt => toLocalDate(pt.timestamp).getTime() >= cutoffMs);
+  const points = (data ?? []).sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  const granularity: Granularity = range === 'day' ? 'hour' : 'day';
   return { points, granularity };
 }
 
-// Convert points to Chart.js data, aligning calendar days or sliding hours
+/* ---------------- Transform to Chart.js ---------------- */
 function toChartData(
   pts: AggregatePoint[],
-  granularity: 'hour' | 'day',
+  granularity: Granularity,
   _deviceName: string | undefined,
   timeRange: TimeRange
 ): ChartData<'line', number[], string> {
@@ -97,33 +106,40 @@ function toChartData(
   const values: number[] = [];
 
   if (granularity === 'day') {
-    // For multi-day, show exactly N calendar days ending today
+    // Render exact LAST N FULL DAYS ending yesterday (exclude today), filling missing days with 0s.
     const days = timeRange === '3days' ? 3 : 7;
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
-      const label = fmtDay(d);
-      labels.push(label);
-      const match = pts.find(pt => fmtDay(toLocalDate(pt.timestamp)) === label);
-      const value = match ? Number(((match.value ?? 0) / 1000).toFixed(2)) : 0;
-      values.push(value);
+    const byKey = new Map<string, AggregatePoint>();
+    for (const p of pts) byKey.set(localDayKeyFromISO(p.timestamp), p);
+
+    const today = startOfLocalDay();
+    for (let i = days; i >= 1; i--) {
+      const d = new Date(today.getTime() - i * MS_DAY);
+      labels.push(fmtDay(d));
+      const key = localDayKey(d);
+      const valWh = byKey.get(key)?.value ?? 0;
+      values.push(Number(((valWh / 1000) || 0).toFixed(2)));
     }
   } else {
-    // Sliding hourly window since midnight
-    const currentHour = new Date().getHours();
+    // Hourly for current day from midnight → now, fill missing hours with 0s.
+    const start = startOfLocalDay();
+    const now = new Date();
+    const currentHour = now.getHours();
+
+    const byHour = new Map<string, AggregatePoint>();
+    for (const p of pts) byHour.set(fmtHour(toLocalDate(p.timestamp)), p);
+
     for (let hr = 0; hr <= currentHour; hr++) {
-      const d = new Date();
+      const d = new Date(start);
       d.setHours(hr, 0, 0, 0);
-      const label = fmtHour(d);
-      labels.push(label);
-      const match = pts.find(pt => fmtHour(toLocalDate(pt.timestamp)) === label);
-      const value = match ? Number(((match.value ?? 0) / 1000).toFixed(2)) : 0;
-      values.push(value);
+      const lab = fmtHour(d);
+      labels.push(lab);
+      const valWh = byHour.get(lab)?.value ?? 0;
+      values.push(Number(((valWh / 1000) || 0).toFixed(2)));
     }
   }
 
   const labelText = granularity === 'hour' ? 'Energy per hour (kWh)' : 'Energy per day (kWh)';
+
   return {
     labels,
     datasets: [
@@ -132,33 +148,34 @@ function toChartData(
         data: values,
         borderColor: chartConfig.colors.primary,
         backgroundColor: (context: any) => {
-          const chart = context.chart;
-          const { ctx, chartArea } = chart;
+          const { chartArea, ctx } = context.chart;
           if (!chartArea) return 'hsla(267, 100%, 58%, 0.10)';
-          const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-          gradient.addColorStop(0, 'hsla(267, 100%, 58%, 0.10)');
-          gradient.addColorStop(1, 'hsla(267, 100%, 58%, 0.40)');
-          return gradient;
+          const g = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+          g.addColorStop(0, 'hsla(267, 100%, 58%, 0.10)');
+          g.addColorStop(1, 'hsla(267, 100%, 58%, 0.40)');
+          return g;
         },
         borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        pointHitRadius: 10,
         pointBackgroundColor: chartConfig.colors.background,
         pointBorderColor: chartConfig.colors.primary,
         pointHoverBackgroundColor: chartConfig.colors.primary,
         pointHoverBorderColor: chartConfig.colors.background,
-        pointRadius: 0,
-        pointHoverRadius: 6,
-        pointHitRadius: 10,
         pointBorderWidth: 2,
         fill: true,
         tension: 0.3,
+        spanGaps: true,
       },
     ],
   };
 }
 
-// Build Chart.js options (custom tooltip for ongoing)
-function buildChartOptions(granularity: 'hour' | 'day'): ChartOptions<'line'> {
+/* ---------------- Chart options ---------------- */
+function buildChartOptions(granularity: Granularity): ChartOptions<'line'> {
   const xTitle = granularity === 'hour' ? 'Hour' : 'Day';
+
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -180,17 +197,6 @@ function buildChartOptions(granularity: 'hour' | 'day'): ChartOptions<'line'> {
         borderWidth: 1,
         padding: 12,
         usePointStyle: true,
-        callbacks: {
-          label: (ctx) => {
-            const val = ctx.parsed.y;
-            let label = ` ${val.toFixed(2)} kWh`;
-            // For daily view, mark the last bar as ongoing
-            if (granularity === 'day' && ctx.dataIndex === ctx.dataset.data.length - 1) {
-              label += ' (ongoing)';
-            }
-            return label;
-          },
-        },
       },
     },
     scales: {
@@ -211,7 +217,7 @@ function buildChartOptions(granularity: 'hour' | 'day'): ChartOptions<'line'> {
   };
 }
 
-// Main component
+/* ---------------- Component ---------------- */
 const DeviceEnergyChart: React.FC<DeviceEnergyChartProps> = ({
   deviceId,
   timeRange,
@@ -219,21 +225,29 @@ const DeviceEnergyChart: React.FC<DeviceEnergyChartProps> = ({
   height = 300,
   className = '',
 }) => {
-  if (import.meta.env.DEV) console.debug('[DeviceEnergyChart] mounted v2 — deviceId:', deviceId, 'timeRange:', timeRange);
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.debug('[DeviceEnergyChart] mounted v8 — deviceId:', deviceId, 'timeRange:', timeRange);
+  }
 
-  const query = useQuery<{ points: AggregatePoint[]; granularity: 'hour' | 'day' }, Error>({
-    queryKey: ['deviceEnergyAggregate', deviceId, timeRange],
+  const query = useQuery<{ points: AggregatePoint[]; granularity: Granularity }, Error>({
+    queryKey: ['deviceEnergyAggregate', deviceId, timeRange, getClientTimeZone()],
     queryFn: () => fetchEnergySeries(deviceId, timeRange),
+    refetchInterval: timeRange === 'day' ? 60_000 : 300_000, // today: 1m; multi-day: 5m
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     retry: 1,
   });
 
-  const granularity: 'hour' | 'day' = query.data?.granularity ?? (timeRange === 'day' ? 'hour' : 'day');
+  const granularity: Granularity =
+    query.data?.granularity ?? (timeRange === 'day' ? 'hour' : 'day');
   const points: AggregatePoint[] = query.data?.points ?? [];
 
-  const chartData = useMemo(() => toChartData(points, granularity, deviceName, timeRange), [points, granularity, deviceName, timeRange]);
+  const chartData = useMemo(
+    () => toChartData(points, granularity, deviceName, timeRange),
+    [points, granularity, deviceName, timeRange]
+  );
   const options = useMemo(() => buildChartOptions(granularity), [granularity]);
 
   if (query.isLoading) {
