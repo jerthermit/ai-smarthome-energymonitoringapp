@@ -4,14 +4,11 @@ import React from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/card';
 import HourlySummaryChart from '../charts/HourlySummaryChart';
 import { Clock } from 'lucide-react';
+import type { HourlyPoint } from '../../../types/dashboard'; // CHANGED: Import HourlyPoint type from types/dashboard
 
-interface HourlyData {
-  hour: number;
-  averageEnergy: number;
-}
-
+// Use the imported HourlyPoint type for consistency
 interface HourlySummarySectionProps {
-  data: HourlyData[];
+  data: HourlyPoint[]; // Changed from HourlyData[] to HourlyPoint[]
   isLoading: boolean;
   error: Error | null;
 }
