@@ -1,8 +1,15 @@
 # Smart Home Energy Monitor With Conversational AI
+![Status](https://img.shields.io/badge/status-submitted-success?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)
+![Tech Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Docker-blueviolet?style=flat-square)
+![AI Powered](https://img.shields.io/badge/AI-Together%20Mistral-informational?style=flat-square)
+
+---
 
 ## 🧠 System Overview
 
-This project is a functional prototype of an AI-powered Smart Home Energy Monitor, submitted for the coding challenge for the Staff Full Stack Engineer (AI-Focused) at GenAI.Labs. It allows users to:
+This project is a functional prototype of an AI-powered Smart Home Energy Monitor, submitted as the author's solution to the coding challenge, Staff Full Stack Engineer (AI-Focused) at GenAI.Labs. It allows users to:
 
 - Register and log in securely
 - Add and view their connected devices
