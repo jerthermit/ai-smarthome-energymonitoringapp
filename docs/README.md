@@ -1,6 +1,8 @@
+# Smart Home Energy Monitor With Conversational AI
+
 ## 🧠 System Overview
 
-This project is a functional prototype of an AI-powered Smart Home Energy Monitoring Platform. It allows users to:
+This project is a functional prototype of an AI-powered Smart Home Energy Monitor, submitted for the coding challenge for the Staff Full Stack Engineer (AI-Focused) at GenAI.Labs. It allows users to:
 
 - Register and log in securely
 - Add and view their connected devices
@@ -35,6 +37,7 @@ This is a greenfield build where architectural and product direction was entirel
 
 ### 🔛 AI Integration
 - **Conversational Engine**: Together AI (via API)
+- **AI Model**: Mistral (7B) Instruct v0.2
 - **Natural Language Parsing**: Custom logic and AI orchestration
 
 ### 🖥 Frontend
@@ -61,8 +64,8 @@ This is a greenfield build where architectural and product direction was entirel
 ### 1. 📁 Clone the Repository
 
 ```
-git clone https://github.com/your-username/smart-home-energy-monitor.git
-cd smart-home-energy-monitor
+git clone https://github.com/jerthermit/ai-smarthome-energymonitoringapp.git
+cd ai-smarthome-energymonitoringapp
 ```
 
 ---
@@ -202,7 +205,7 @@ Below are sample requests you can try using Swagger UI, Postman, or `curl`.
 **Endpoint**: `GET /api/v1/telemetry/energy_summary`  
 **Headers**: `Authorization: Bearer <your_token>`
 
-Returns a list of devices and their total energy consumption within a specified range (e.g., last 7 days).
+Returns a list of devices and their total energy consumption within a specified range (today, last 3 days, last 7 days).
 
 ---
 
@@ -261,7 +264,7 @@ This project includes unit tests for core backend logic and one integration test
 To run the test suite inside the backend container:
 
 ```
-docker compose exec backend pytest
+docker compose exec backend python backend/tests/run_all_tests.py
 ```
 
 The following areas are covered:
