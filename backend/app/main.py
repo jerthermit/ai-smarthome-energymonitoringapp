@@ -7,21 +7,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-# --- MODIFIED THIS BLOCK ---
-# Configure logging to show DEBUG level messages from all modules, especially app.ai
+# --- LOGGING CONFIGURATION ---
 logging.basicConfig(
-    level=logging.DEBUG, # Changed to DEBUG
+    level=logging.DEBUG,  # Show DEBUG messages
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-
-# Explicitly set log level for app.ai modules to DEBUG to ensure visibility
 logging.getLogger("app.ai.orchestrator").setLevel(logging.DEBUG)
 logging.getLogger("app.ai.service").setLevel(logging.DEBUG)
 logging.getLogger("app.ai.energy_service").setLevel(logging.DEBUG)
-# --- END OF MODIFIED BLOCK ---
+# -----------------------------
 
-# Load environment variables from .env file
+# Load environment variables from .env
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
@@ -33,27 +30,35 @@ from app.ai.api import router as ai_router
 from app.websocket import router as websocket_router
 from app.simulation_service import run_simulation
 
-# Create database tables
+# Create database tables if they don't exist
 Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Manages the application's lifespan events.
-    Starts the simulation task on startup and cancels it on shutdown.
+    Starts the simulation task on startup and cancels it on shutdown,
+    but only if ENABLE_SIMULATION=true.
     """
-    logging.info("Application startup: Starting background simulation task...")
-    simulation_task = asyncio.create_task(run_simulation())
+    enable_sim = os.getenv("ENABLE_SIMULATION", "true").lower() == "true"
     
-    yield  # The application is running during this yield
+    if enable_sim:
+        logging.info("Application startup: Starting background simulation task...")
+        simulation_task = asyncio.create_task(run_simulation())
+    else:
+        logging.info("Application startup: Simulation disabled (ENABLE_SIMULATION=false)")
     
-    logging.info("Application shutdown: Stopping simulation task...")
-    simulation_task.cancel()
-    try:
-        await simulation_task
-    except asyncio.CancelledError:
-        logging.info("Simulation task cancelled successfully.")
+    yield  # Run the app
+    
+    if enable_sim:
+        logging.info("Application shutdown: Stopping simulation task...")
+        simulation_task.cancel()
+        try:
+            await simulation_task
+        except asyncio.CancelledError:
+            logging.info("Simulation task cancelled successfully.")
 
+# Instantiate the FastAPI app with our custom lifespan
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -61,7 +66,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Set up CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -70,12 +75,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routers
+# Include routers
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(telemetry_router, prefix=settings.API_V1_STR)
 app.include_router(ai_router, prefix=settings.API_V1_STR)
-
-# Include the WebSocket router correctly
 app.include_router(websocket_router)
 
 @app.get("/")
