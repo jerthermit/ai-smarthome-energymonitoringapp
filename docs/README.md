@@ -118,6 +118,93 @@ This will spin up the following containers:
 
 ---
 
+### 4. 👤 Create a Test User
+
+Before running the simulator, open the frontend at http://localhost:5173 and register a user with the following credentials:
+
+- **Email**: `test@test.com`  (must be this email, for testing purposes)
+- **Password**: `anypassword`  (can be any password, following the password policy)
+- **Full Name**: `Test User`  (can be any name)
+
+Then log in and land on the dashboard. This account is required for telemetry to be correctly associated.
+
+---
+
+### 5. 🛰 Seed Simulated Telemetry Data
+
+Once the test user is created and the backend is running, run the data simulator:
+
+```
+docker compose exec backend python simulate.py
+```
+
+This will:
+
+- Seed device records linked to the test user
+- Upload historical energy usage data
+
+---
+
+### 6. ✅ Access the App
+
+- **Frontend**: [http://localhost:5173](http://localhost:5173)  
+- **API Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)  
+- **OpenAPI Schema**: [http://localhost:8000/api/v1/openapi.json](http://localhost:8000/api/v1/openapi.json)
+
+### 1. 📁 Clone the Repository
+
+```
+git clone https://github.com/jerthermit/ai-smarthome-energymonitoringapp.git
+cd ai-smarthome-energymonitoringapp
+```
+
+---
+
+### 2. 🧪 Environment Variables
+
+Both the backend and frontend use environment variables. Sample `.env.example` files are provided:
+
+```
+# Backend
+cp backend/env.example backend/.env
+
+# Frontend
+cp frontend/.env.example frontend/.env
+```
+
+⚠️ You’ll need a **Together AI API Key** to enable natural-language queries.  
+Add it to the backend `.env` file as:
+
+```
+TOGETHER_API_KEY=your_key_here
+```
+
+---
+
+### 3. 🐳 Run the Full Stack via Docker Compose
+
+Ensure **Docker** and **Docker Compose** are installed.
+
+```
+# Stop and clean previous runs
+docker compose down -v
+
+# Build and start all services
+docker compose up --build
+```
+
+This will spin up the following containers:
+
+- `backend`: FastAPI service at [http://localhost:8000](http://localhost:8000)
+- `frontend`: React app at [http://localhost:5173](http://localhost:5173)
+- `db`: PostgreSQL + TimescaleDB
+
+---
+
+ADditional step before running the data simulator:
+go to the frontend. then create an account with email test@test.com. could be any password or name.
+Then run the seed telemetry data.
+
 ### 4. 🛰 Seed Simulated Telemetry Data
 
 Once the backend is running, run the data simulator:
@@ -291,7 +378,7 @@ In addition to the core requirements, the following stretch goals were successfu
   Users can submit natural-language queries directly from the frontend interface and receive structured AI-generated responses rendered in the chat window.
 
 - ✅ **Real-Time Chart Updates**  
-  Energy usage charts automatically update in near real-time via WebSockets. No page refresh is required to reflect new telemetry data.
+  Energy usage charts automatically update in near real-time through a hybrid implementation using HTTP polling with WebSocket-ready architecture.
 
 - ✅ **Aggregate and Ranked Analytics**  
   The system computes and displays:
