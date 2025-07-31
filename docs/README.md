@@ -7,7 +7,7 @@
 
 ---
 
-## 🧠 System Overview
+## System Overview
 
 This project is a functional prototype of an AI-powered Smart Home Energy Monitor, submitted as the author's solution to the coding challenge, Staff Full Stack Engineer (AI-Focused) at GenAI.Labs. It allows users to:
 
@@ -29,9 +29,9 @@ The system is fully containerized via Docker and orchestrated using `docker-comp
 
 This is a greenfield build where architectural and product direction was entirely up to the developer.
 
-## 🧰 Tech Stack
+## Tech Stack
 
-### 🔙 Backend
+### Backend
 - **Language**: Python 3.11
 - **Framework**: FastAPI 0.104.1
 - **Database**: PostgreSQL with TimescaleDB (time-series optimized)
@@ -42,12 +42,12 @@ This is a greenfield build where architectural and product direction was entirel
 - **API Documentation**: Swagger/OpenAPI (auto-generated via FastAPI)
 - **Testing**: Pytest, HTTPX test client
 
-### 🔛 AI Integration
+### AI Integration
 - **Conversational Engine**: Together AI (via API)
 - **AI Model**: Mistral (7B) Instruct v0.2
 - **Natural Language Parsing**: Custom logic and AI orchestration
 
-### 🖥 Frontend
+### Frontend
 - **Language**: TypeScript 5+
 - **Framework**: React 19.1.0
 - **State Management**: TanStack Query (React Query), React Hook Form
@@ -57,7 +57,7 @@ This is a greenfield build where architectural and product direction was entirel
 - **Date Handling**: date-fns
 - **Animation**: Framer Motion
 
-### ⚙ DevOps & Tooling
+### DevOps & Tooling
 - **Containerization**: Docker (Python-slim and Node-slim base images)
 - **Orchestration**: Docker Compose
 - **Linting & Formatting**:
@@ -66,9 +66,9 @@ This is a greenfield build where architectural and product direction was entirel
 - **Environment Management**: `.env` files for frontend and backend
 - **Version Control**: Git with Husky for git hooks
 
-## ⚙️ Setup Instructions
+## Setup Instructions
 
-### 1. 📁 Clone the Repository
+### 1. Clone the Repository
 
 ```
 git clone https://github.com/jerthermit/ai-smarthome-energymonitoringapp.git
@@ -77,7 +77,7 @@ cd ai-smarthome-energymonitoringapp
 
 ---
 
-### 2. 🧪 Environment Variables
+### 2. Environment Variables
 
 Both the backend and frontend use environment variables. Sample `.env.example` files are provided:
 
@@ -98,7 +98,7 @@ TOGETHER_API_KEY=your_key_here
 
 ---
 
-### 3. 🐳 Run the Full Stack via Docker Compose
+### 3. Run the Full Stack via Docker Compose
 
 Ensure **Docker** and **Docker Compose** are installed.
 
@@ -118,7 +118,7 @@ This will spin up the following containers:
 
 ---
 
-### 4. 👤 Create a Test User
+### 4. Create a Test User
 
 Before running the simulator, open the frontend at http://localhost:5173 and register a user with the following credentials:
 
@@ -130,7 +130,7 @@ Then log in and land on the dashboard. This account is required for telemetry to
 
 ---
 
-### 5. 🛰 Seed Simulated Telemetry Data
+### 5. Seed Simulated Telemetry Data
 
 Once the test user is created and the backend is running, run the data simulator:
 
@@ -145,13 +145,13 @@ This will:
 
 ---
 
-### 6. ✅ Access the App
+### 6. Access the App
 
 - **Frontend**: [http://localhost:5173](http://localhost:5173)  
 - **API Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)  
 - **OpenAPI Schema**: [http://localhost:8000/api/v1/openapi.json](http://localhost:8000/api/v1/openapi.json)
 
-## 📘 API Documentation
+## API Documentation
 
 This project uses FastAPI, which automatically generates interactive API documentation.
 
@@ -165,13 +165,13 @@ You may also import the OpenAPI JSON link into Postman or Insomnia to generate a
 
 > All backend services are accessible via RESTful endpoints and grouped under `/api/v1`.
 
-## 📮 API Usage Examples
+## API Usage Examples
 
 Below are sample requests you can try using Swagger UI, Postman, or `curl`.
 
 ---
 
-### 🔐 1. Register a New User
+### 1. Register a New User
 
 **Endpoint**: `POST /api/v1/auth/register`  
 **Payload**:
@@ -186,7 +186,7 @@ Below are sample requests you can try using Swagger UI, Postman, or `curl`.
 
 ---
 
-### 🔑 2. Log In
+### 2. Log In
 
 **Endpoint**: `POST /api/v1/auth/login`  
 **Payload**:
@@ -202,7 +202,7 @@ Below are sample requests you can try using Swagger UI, Postman, or `curl`.
 
 ---
 
-### 📈 3. Ingest Telemetry Data
+### 3. Ingest Telemetry Data
 
 **Endpoint**: `POST /api/v1/telemetry`  
 **Headers**: `Authorization: Bearer <your_token>`  
@@ -218,7 +218,7 @@ Below are sample requests you can try using Swagger UI, Postman, or `curl`.
 
 ---
 
-### 📊 4. Get Energy Summary per Device
+### 4. Get Energy Summary per Device
 
 **Endpoint**: `GET /api/v1/telemetry/energy_summary`  
 **Headers**: `Authorization: Bearer <your_token>`
@@ -227,7 +227,7 @@ Returns a list of devices and their total energy consumption within a specified 
 
 ---
 
-### 🤖 5. Ask a Question via AI
+### 5. Ask a Question via AI
 
 **Endpoint**: `POST /api/v1/ai/chat`  
 **Headers**: `Authorization: Bearer <your_token>`  
@@ -257,25 +257,25 @@ Returns a list of devices and their total energy consumption within a specified 
 
 You can test all of these using the live Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-## 📌 Assumptions Made
+## Assumptions Made
 
 To keep the project focused and aligned with the core scope, the following assumptions were made:
 
-- 🐳 **Docker and Docker Compose** are installed locally.
-- 🧪 Environment variables are expected to be configured by copying from `.env.example` files in both frontend and backend.
-- 🔑 A **Together AI API key** is required to enable the AI assistant and must be added to `backend/.env`.
-- 🛰 **Simulated telemetry data** (including user, devices, and readings) is loaded by running:
+- **Docker and Docker Compose** are installed locally.
+- Environment variables are expected to be configured by copying from `.env.example` files in both frontend and backend.
+- A **Together AI API key** is required to enable the AI assistant and must be added to `backend/.env`.
+- **Simulated telemetry data** (including user, devices, and readings) is loaded by running:
   ```
   docker compose exec backend python simulate.py
   ```
-- 🎯 The system is intended for **local development and testing** only — no production deployment (e.g., HTTPS, CI/CD) is included.
-- 🌐 The **frontend assumes the backend is running at** `http://localhost:8000`, and API calls are authenticated using JWT tokens.
-- 🔐 Most endpoints require an **authenticated session** (e.g., telemetry, AI queries).
-- 🤖 Natural-language requests hit the **live Together AI API** and may incur actual usage depending on your API key plan.
-- ⏱ Token expiry is supported but **no refresh token mechanism** is included.
-- ⛔ UI features like device editing or pagination were **intentionally left out** to prioritize full-stack integration.
+- The system is intended for **local development and testing** only — no production deployment (e.g., HTTPS, CI/CD) is included.
+- The **frontend assumes the backend is running at** `http://localhost:8000`, and API calls are authenticated using JWT tokens.
+- Most endpoints require an **authenticated session** (e.g., telemetry, AI queries).
+- Natural-language requests hit the **live Together AI API** and may incur actual usage depending on your API key plan.
+- Token expiry is supported but **no refresh token mechanism** is included.
+- UI features like device editing or pagination were **intentionally left out** to prioritize full-stack integration.
 
-## 🧪 Testing
+## Testing
 
 This project includes unit tests for core backend logic and one integration test to validate end-to-end functionality.
 
@@ -294,7 +294,7 @@ The following areas are covered:
 
 > Note: Test coverage is focused on backend logic. Frontend testing and CI pipelines were not included due to time prioritization toward full functional delivery.
 
-## 🌟 Stretch Goals Achieved
+## Stretch Goals Achieved
 
 In addition to the core requirements, the following stretch goals were successfully implemented:
 
