@@ -9,7 +9,7 @@
 
 ## System Overview
 
-This project is a functional prototype of an AI-powered Smart Home Energy Monitor, submitted as the author's solution to the coding challenge, Staff Full Stack Engineer (AI-Focused) at GenAI.Labs. It allows users to:
+This project is a functional prototype of an AI-powered Smart Home Energy Monitor. It allows users to:
 
 - Register and log in securely
 - Add and view their connected devices
