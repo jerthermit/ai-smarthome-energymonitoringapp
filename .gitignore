@@ -67,3 +67,10 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+
+# Secrets & envs
+.env
+*.env
+
+# Virtual envs
+.venv/
