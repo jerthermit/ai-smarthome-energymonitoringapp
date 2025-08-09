@@ -1,9 +1,13 @@
 # Smart Home Energy Monitor With Conversational AI
 ![Status](https://img.shields.io/badge/status-submitted-success?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)
 ![Tech Stack](https://img.shields.io/badge/stack-FastAPI%20%7C%20React%20%7C%20Docker-blueviolet?style=flat-square)
 ![AI Powered](https://img.shields.io/badge/AI-Together%20Mistral-informational?style=flat-square)
+
+⚠️ Interview-only code. 
+This repository is provided solely for interview evaluation. 
+No licence is granted for production use, redistribution, or derivative works without my written consent.
+© 2025 Emman Ermitaño. All rights reserved.
 
 ---
 
